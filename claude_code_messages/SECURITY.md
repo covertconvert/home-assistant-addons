@@ -1,27 +1,32 @@
-# Claude Code Messages — Security & Privacy Rules
+# Claude Code Messages — Security & Privacy
 
-These are the guardrails the addon MUST enforce so that Claude can edit your HA config without ever causing real damage. Split into hard rules (enforced by code/hooks — can't be bypassed) and soft rules (in `CLAUDE.md`, guide Claude's behaviour).
+The addon enforces a layered defense: hard rules (code-enforced, can't be bypassed), user-controllable prompts (you decide per-action), and soft rules (guide Claude's behaviour but not enforced).
 
-**Last reviewed: 2026-06-09 (draft v0.1)**
-**Next review due: before first public release**
+**Last reviewed: 2026-06-10 (v0.1.0)**
 
 ---
 
 ## Hard rules (enforced — no bypass)
 
+These fire from the `PreToolUse` hook before any tool runs. They cannot be disabled by toggling settings or approving prompts.
+
 ### 1. Forbidden files (read & write blocked)
 
-These never get read into Claude's context, never get sent to the API, never get edited or deleted. The hook returns an "access denied" error if Claude tries.
+These never get read into Claude's context, never get edited, never get deleted. The hook returns "deny" if Claude tries.
 
 - `/config/secrets.yaml`
-- `/config/.storage/auth*`
-- `/config/.storage/onboarding*`
-- Anything matching glob `**/*token*`, `**/*password*`, `**/*credential*`, `**/.env*`
 - `/config/claude-config/` (the addon's own OAuth dir — Claude can't see its own creds)
+- Anything matching `**/.storage/auth*`
+- Anything matching `**/.storage/onboarding*`
+- Anything matching `**/*token*`, `**/*password*`, `**/*credential*`, `**/.env*`
 
-### 2. Protected files (deletion blocked, auto-backup before edit)
+### 2. Read-only paths (writes blocked)
 
-Edits allowed, but the addon auto-snapshots to `<file>.bak.<timestamp>` first. `rm` is blocked.
+- `/addons` — reads allowed (so Claude can reason about installed addons), but Write/Edit/MultiEdit/NotebookEdit are blocked.
+
+### 3. Protected files (auto-snapshot before edit)
+
+The hook auto-copies these to `<file>.bak.<timestamp>` before any Write/Edit/MultiEdit, so the change is recoverable.
 
 - `/config/configuration.yaml`
 - `/config/automations.yaml`
@@ -32,39 +37,47 @@ Edits allowed, but the addon auto-snapshots to `<file>.bak.<timestamp>` first. `
 - `/config/ui-lovelace.yaml`
 - Any file matching `/config/.storage/lovelace*`
 
-### 3. Destructive Bash commands — require explicit confirmation EVERY time
+**Note:** deletion of these files via the `Bash` tool (e.g. plain `rm`) is **not** path-blocked — it goes through the standard Bash permission flow (see below). Recovery is via the `.bak.*` snapshot or a HA backup.
 
-These bypass the "remember my approval" mechanism. Even if user has approved Bash for the session, these trigger a fresh confirm:
+### 4. Destructive Bash commands — blocked outright
 
-- `rm -rf` (any form)
-- `git push --force`, `git push -f`
+The hook blocks Bash commands matching any of these patterns. There's no "approve once" — the command is rejected and Claude must take a different path.
+
+- `rm -rf` (any flag combination including `-r`/`-R`/`-f`)
+- `git push --force` / `git push -f`
 - `git reset --hard`
 - `git clean -f`
-- `ha core stop`, `ha core restart`
-- `ha host reboot`, `ha host shutdown`
-- `dd`, `mkfs.*`, `wipefs`
-- Anything piping into `sudo`, `su`, or modifying `/etc/`
-- `curl ... | sh`, `wget ... | sh` (pipe-to-shell)
-
-### 4. Network restrictions
-
-- Outbound HTTP allowed only via Claude's official API endpoints and the OAuth flow
-- No telemetry or analytics endpoints, ever
-- Image uploads stay local — never sent except as part of the Anthropic API call
+- `ha core stop` / `ha core restart`
+- `ha host reboot` / `ha host shutdown`
+- `dd if=…`
+- `mkfs.*` / `wipefs`
+- Anything invoking `sudo` or `su -`
+- `curl … | sh`, `curl … | bash`, `wget … | sh`, etc. (pipe-to-shell)
 
 ### 5. Audit log
 
-Every tool call (Read, Edit, Write, Bash, WebFetch, etc.) appended to `/config/claude-code-panel-audit.log` with timestamp, tool name, arguments, and outcome. Log is append-only from the addon's view. User can review or rotate manually.
+Every tool call (Read, Edit, Write, Bash, WebFetch, etc.) — both allowed and blocked — is appended to `/config/claude-code-messages-audit.log` with timestamp, tool name, arguments, and outcome. The file is created mode 0600 on first run. Append-only from the addon's view; rotate or clear it manually.
 
 ---
 
-## Soft rules (in `CLAUDE.md` — Claude is asked to follow)
+## User-controllable prompts (in Settings)
 
-These guide Claude's behaviour. They're not enforced by code, but they shape its decisions.
+These are ON by default. Turn them off only if you trust Claude to act without confirmation in your environment.
+
+- **Ask before Bash** — every shell command shows an Approve / Reject card. Independent of the destructive list above (which is *always* blocked regardless of this setting).
+- **Ask before WebFetch** — every outbound HTTP fetch shows a card with the URL. You can pick *Allow once* or *Always allow this domain* (the domain list lives in the addon's settings file).
+
+When the toggle is off, calls go straight through with no prompt — still audit-logged.
+
+---
+
+## Soft rules (in `CLAUDE.md`)
+
+These guide Claude's behaviour; they're not enforced by code. Trust them to the same degree you trust Claude to follow instructions.
 
 - Never restart Home Assistant without explicit user approval (reload is fine; restart is not)
 - Never run `git commit --no-verify` or otherwise bypass pre-commit hooks
-- Confirm understanding before making non-trivial edits (restate + propose + ask)
+- Confirm understanding before non-trivial edits (restate + propose + ask)
 - Don't add features, refactor, or introduce abstractions beyond what the task requires
 - Don't create new markdown/README files unless explicitly requested
 - Prefer editing existing files over creating new ones
@@ -74,31 +87,46 @@ These guide Claude's behaviour. They're not enforced by code, but they shape its
 
 ## Privacy
 
-- OAuth creds live in `/config/claude-config/` only. Never logged, never read by any tool call.
+- OAuth credentials live in `/config/claude-config/` only. They're in the **Forbidden** list above, so the tool layer can never read them.
 - The addon does not collect telemetry, usage stats, or crash reports.
-- User can revoke OAuth from Anthropic's dashboard at any time; addon respects revocation immediately.
-- The audit log contains the *contents* of edits Claude makes — be aware if sharing logs for debugging.
-- All conversation history stays on the HAOS host. Optionally exportable, never auto-uploaded.
+- You can revoke OAuth from your Anthropic dashboard at any time; the addon respects revocation on the next request.
+- The audit log records the *arguments* passed to tools (file paths, command strings, URL hosts). It does **not** record file contents read by Claude or assistant message text.
+- Conversation history stays on the HAOS host (`/config/claude-config/`'s jsonl files). Never auto-uploaded anywhere except to Anthropic as part of the conversation itself.
+- Image attachments are uploaded to `/data/uploads/` inside the addon, sent to Anthropic as part of the message payload, and not pushed anywhere else.
 
 ---
 
 ## What this does NOT protect against
 
-Be honest about the limits:
+Being honest about limits:
 
-- A user who manually approves a destructive Bash prompt anyway. The UI makes this hard but not impossible.
-- Anthropic-side data handling — covered by your account's terms with Anthropic, not by us.
-- Physical access to the HAOS host.
-- A maliciously-crafted CLAUDE.md or prompt that tricks Claude into framing a harmful action as benign. The hard-rule list above is the real backstop here.
+- **A user who manually approves a destructive prompt.** Ask-before-Bash makes accidents harder, not impossible.
+- **Plain `rm` of a protected file** — only `rm -rf` is auto-blocked; plain `rm` is allowed if you approve the Bash prompt. Snapshots are your recovery path.
+- **Outbound HTTP to arbitrary domains** — the addon's network egress is not firewalled. WebFetch confirmation is the only gate, and only if `ask_webfetch` is on.
+- **Anthropic-side data handling** — covered by your account's terms with Anthropic, not by this addon.
+- **Physical access to the HAOS host.**
+- **A maliciously-crafted CLAUDE.md or prompt** that tricks Claude into framing a harmful action as benign. The hard-rule list above is the real backstop here.
+
+---
+
+## Planned (not yet implemented)
+
+Mentioned in earlier drafts but not enforced today. Tracked for a future release:
+
+- Path-based protection on `Bash` (e.g. blocking any command whose arguments contain a protected file path)
+- Network egress firewall limiting outbound HTTP to Anthropic + the local HA instance
+- Pattern matching for `dd of=…` (currently only `dd if=…` is caught)
+- Editing of `/etc/` files via Bash redirection (currently not specifically blocked beyond the `sudo` rule)
 
 ---
 
 ## Review checklist (before any release)
 
 - [ ] Hard-rule file list is current with HA's file layout
-- [ ] Destructive Bash patterns are tested against actual attempt scenarios
-- [ ] Audit log path is writable and not world-readable
+- [ ] Destructive Bash patterns tested against attempt scenarios
+- [ ] Audit log path is writable, mode 0600
 - [ ] OAuth dir permissions are 0700
 - [ ] No new third-party dependencies introduce telemetry
-- [ ] CLAUDE.md soft rules reflect actual current best practice
-- [ ] Privacy section accurately describes what's stored/transmitted
+- [ ] CLAUDE.md soft rules reflect current best practice
+- [ ] Privacy section accurately describes what's stored and transmitted
+- [ ] "Planned" section reflects the current backlog

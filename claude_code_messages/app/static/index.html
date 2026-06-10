@@ -198,46 +198,47 @@
           <li>The app's own OAuth folder — Claude can't see its own credentials</li>
         </ul>
 
-        <h4 class="policy-heading">Files Claude can't delete (edits allowed, auto-backup first)</h4>
+        <h4 class="policy-heading">Files auto-backed-up before edit</h4>
         <ul class="consent-list">
           <li><code>configuration.yaml</code>, <code>automations.yaml</code>, <code>scripts.yaml</code>, <code>scenes.yaml</code></li>
           <li><code>groups.yaml</code>, <code>customize.yaml</code>, <code>ui-lovelace.yaml</code></li>
           <li>Lovelace storage files (<code>.storage/lovelace*</code>)</li>
         </ul>
-        <p class="setting-help">Before any edit, the addon snapshots a copy to <code>&lt;file&gt;.bak.&lt;timestamp&gt;</code>.</p>
+        <p class="setting-help">Before any edit, the addon snapshots a copy to <code>&lt;file&gt;.bak.&lt;timestamp&gt;</code>. Note: deletion via plain <code>rm</code> isn't path-blocked — it goes through the Bash permission flow.</p>
 
         <h4 class="policy-heading">Commands Claude can never run</h4>
         <ul class="consent-list">
           <li><code>rm -rf</code> in any form</li>
           <li><code>git push --force</code>, <code>git reset --hard</code>, <code>git clean -f</code></li>
           <li><code>ha core restart/stop</code>, <code>ha host reboot/shutdown</code></li>
-          <li><code>dd</code>, <code>mkfs.*</code>, <code>wipefs</code></li>
-          <li>Anything piping into <code>sudo</code>, <code>su</code>, or modifying <code>/etc/</code></li>
+          <li><code>dd if=…</code>, <code>mkfs.*</code>, <code>wipefs</code></li>
+          <li>Anything invoking <code>sudo</code> or <code>su -</code></li>
           <li>Pipe-to-shell (<code>curl … | sh</code>, <code>wget … | sh</code>)</li>
         </ul>
         <p class="setting-help">
-          These bypass any "remember my approval" mechanism. Even if you've
-          allowed Bash for the session, these always trigger a fresh confirm
-          or are blocked outright.
+          These are blocked outright — no approval can override them. Claude has to take a different path.
         </p>
 
-        <h4 class="policy-heading">Network</h4>
+        <h4 class="policy-heading">Network &amp; privacy</h4>
         <ul class="consent-list">
-          <li>Outbound calls only to Anthropic's API and your configured Home Assistant</li>
+          <li>WebFetch prompts for confirmation per domain (when the setting is on); outbound HTTP is not otherwise firewalled</li>
           <li>No telemetry, no analytics, ever</li>
-          <li>Images you attach stay local — only sent as part of the message to Claude</li>
+          <li>Conversation history stays on this Home Assistant host</li>
+          <li>Images you attach are sent to Anthropic as part of the message and not pushed anywhere else</li>
         </ul>
 
         <h4 class="policy-heading">Audit log</h4>
         <p class="setting-help">
-          Every tool call (Read, Edit, Write, Bash, WebFetch, etc.) is appended
-          to <code>/config/claude-code-panel-audit.log</code> with timestamp,
-          tool name, arguments, and outcome. You can review or rotate it any time.
+          Every tool call (Read, Edit, Write, Bash, WebFetch, etc.) — allowed and blocked — is appended
+          to <code>/config/claude-code-messages-audit.log</code> with timestamp,
+          tool name, arguments, and outcome. Append-only from the addon; you can review or rotate it any time.
         </p>
 
         <h4 class="policy-heading">What this does NOT cover</h4>
         <ul class="consent-list">
           <li>A destructive prompt you manually approve anyway</li>
+          <li>Plain <code>rm</code> of a protected file (only <code>rm -rf</code> is auto-blocked; recovery via the <code>.bak.*</code> snapshot)</li>
+          <li>Outbound HTTP to arbitrary domains if you've turned off WebFetch confirmation</li>
           <li>Anthropic's handling of your data — see their privacy policy</li>
           <li>Physical access to the HAOS host</li>
         </ul>
