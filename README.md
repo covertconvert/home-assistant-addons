@@ -6,7 +6,7 @@ Custom Home Assistant add-ons by covertconvert.
 
 Add this repository to your Home Assistant instance:
 
-1. Open Home Assistant → **Settings** → **Add-ons** → **Add-on Store**
+1. Open Home Assistant → **Settings** → **Apps** → **Install apps** (blue button)
 2. Click the ⋮ menu in the top right → **Repositories**
 3. Paste this URL: `https://github.com/covertconvert/home-assistant-addons`
 4. Click **Add**, then refresh the store

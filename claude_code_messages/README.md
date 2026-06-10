@@ -31,12 +31,10 @@ This addon wraps the same `claude` CLI but gives it a proper chat UI: bubbles, c
 
 ## Installation
 
-This is a local addon. Drop the folder into your local addons share:
-
-1. SMB into your HA host and copy the `claude_code_messages/` folder into `/addons/`
-2. Home Assistant → Settings → Add-ons → Add-on Store → ⋮ → **Check for updates**
-3. Find **Claude Code Messages** under "Local add-ons" → Install
-4. Start the addon and open it from the sidebar
+1. In Home Assistant: **Settings → Apps → Install apps** (blue button) → **⋮ → Repositories**
+2. Paste `https://github.com/covertconvert/home-assistant-addons` → **Add**
+3. Refresh the store; find **Claude Code Messages** under "Home Assistant Add-ons"
+4. Install → Start → open from the sidebar
 
 ## First-run authentication
 
