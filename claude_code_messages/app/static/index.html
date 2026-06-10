@@ -91,7 +91,7 @@
         <p class="setting-help">
           Scope is whatever your long-lived token can do in HA — admin tokens
           can do everything. Built-in safety hooks still apply on top: secrets
-          and auth files are off-limits entirely, the installed-addons folder
+          and auth files are off-limits entirely, the installed-apps folder
           (<code>/addons</code>) is read-only, and destructive shell commands
           (rm -rf, force pushes, mkfs, etc.) are blocked.
         </p>
@@ -148,7 +148,7 @@
           Let Claude read and control your Home Assistant. Uses the
           <a href="https://pypi.org/project/ha-mcp/" target="_blank" rel="noopener">ha-mcp</a>
           server. Tools run with your token's permissions — write hooks still
-          apply, so addon code stays read-only.
+          apply, so app code stays read-only.
         </p>
         <div id="ha-mcp-fields" hidden>
           <details class="how-to" open>
@@ -204,7 +204,7 @@
           <li><code>groups.yaml</code>, <code>customize.yaml</code>, <code>ui-lovelace.yaml</code></li>
           <li>Lovelace storage files (<code>.storage/lovelace*</code>)</li>
         </ul>
-        <p class="setting-help">Before any edit, the addon snapshots a copy to <code>&lt;file&gt;.bak.&lt;timestamp&gt;</code>. Note: deletion via plain <code>rm</code> isn't path-blocked — it goes through the Bash permission flow.</p>
+        <p class="setting-help">Before any edit, the app snapshots a copy to <code>&lt;file&gt;.bak.&lt;timestamp&gt;</code>. Note: deletion via plain <code>rm</code> isn't path-blocked — it goes through the Bash permission flow.</p>
 
         <h4 class="policy-heading">Commands Claude can never run</h4>
         <ul class="consent-list">
@@ -231,7 +231,7 @@
         <p class="setting-help">
           Every tool call (Read, Edit, Write, Bash, WebFetch, etc.) — allowed and blocked — is appended
           to <code>/config/claude-code-messages-audit.log</code> with timestamp,
-          tool name, arguments, and outcome. Append-only from the addon; you can review or rotate it any time.
+          tool name, arguments, and outcome. Append-only from the app; you can review or rotate it any time.
         </p>
 
         <h4 class="policy-heading">What this does NOT cover</h4>

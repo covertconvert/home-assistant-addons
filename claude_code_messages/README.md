@@ -4,11 +4,11 @@ A graphical chat interface for the [Claude Code](https://docs.claude.com/en/docs
 
 ![icon](logo.png)
 
-> **Transparency:** this addon was built with the help of Claude Code itself. Flagging upfront because I know some people prefer to avoid AI-assisted projects. The architecture and the security rules are mine; a lot of the implementation was a collaboration with the AI. The full security model is in [SECURITY.md](SECURITY.md) and all the code is open in this repo.
+> **Transparency:** this app was built with the help of Claude Code itself. Flagging upfront because I know some people prefer to avoid AI-assisted projects. The architecture and the security rules are mine; a lot of the implementation was a collaboration with the AI. The full security model is in [SECURITY.md](SECURITY.md) and all the code is open in this repo.
 
 ## Why
 
-The existing terminal-based Claude addons work, but they're rough on mobile:
+The existing terminal-based Claude apps work, but they're rough on mobile:
 
 - xterm.js is hard to copy/paste from on iOS
 - No image attachments
@@ -16,19 +16,19 @@ The existing terminal-based Claude addons work, but they're rough on mobile:
 - Permission prompts mixed in with chat output
 - No progress visibility
 
-This addon wraps the same `claude` CLI but gives it a proper chat UI: bubbles, code blocks with copy buttons, image attachments, explicit Stop button, and inline approve/reject cards for permission prompts.
+This app wraps the same `claude` CLI but gives it a proper chat UI: bubbles, code blocks with copy buttons, image attachments, explicit Stop button, and inline approve/reject cards for permission prompts.
 
 ## Requirements
 
 **Required**
 
-- A **Claude account** with an active Claude Code subscription (Pro, Max, or Team). The addon uses your subscription via OAuth — there is no usage-based API key required and your subscription billing applies as normal. Sign up at [claude.com](https://claude.com) if you don't already have one.
+- A **Claude account** with an active Claude Code subscription (Pro, Max, or Team). The app uses your subscription via OAuth — there is no usage-based API key required and your subscription billing applies as normal. Sign up at [claude.com](https://claude.com) if you don't already have one.
 
 **Optional but recommended**
 
 - A **Home Assistant long-lived access token**, if you want Claude to read entity states, call services, edit automations/scripts/dashboards, or trigger backups. Without it, Claude can still edit YAML files in `/config` but won't be able to interact with HA's live state.
   - Generate one from **HA → Profile (your avatar) → Security → Long-lived access tokens → Create token**
-  - Paste it into the addon under **Settings → Home Assistant integration**
+  - Paste it into the app under **Settings → Home Assistant integration**
 
 ## Features
 
@@ -39,7 +39,7 @@ This addon wraps the same `claude` CLI but gives it a proper chat UI: bubbles, c
 - **Markdown rendering** — fenced code blocks with copy buttons, bold/italic/lists/links
 - **Permission cards** — inline Approve / Always allow / Reject for Bash and WebFetch
 - **Stop button** — cancel mid-generation without killing the session
-- **Resume** — pick up a session after the CLI exits or the addon restarts
+- **Resume** — pick up a session after the CLI exits or the app restarts
 - **Audit log** — every tool call appended to `/config/claude-code-messages-audit.log`
 - **Built-in security policy** — hard-coded rules that block forbidden file reads, destructive Bash, etc. Viewable in Settings.
 
@@ -47,16 +47,16 @@ This addon wraps the same `claude` CLI but gives it a proper chat UI: bubbles, c
 
 1. In Home Assistant: **Settings → Apps → Install apps** (blue button) → **⋮ → Repositories**
 2. Paste `https://github.com/covertconvert/home-assistant-addons` → **Add**
-3. Refresh the store; find **Claude Code Messages** under "Home Assistant Add-ons"
+3. Refresh the store; find **Claude Code Messages** under "Home Assistant Apps"
 4. Install → Start → open from the sidebar
 
 ## First-run authentication
 
 On first open you'll be prompted to authenticate your Claude account:
 
-1. The addon opens a Claude OAuth link
-2. Sign in on the Anthropic site and paste the code back into the addon
-3. Token is saved to `/config/claude-config/` (persists across addon updates)
+1. The app opens a Claude OAuth link
+2. Sign in on the Anthropic site and paste the code back into the app
+3. Token is saved to `/config/claude-config/` (persists across app updates)
 
 Then, if you want Claude to talk to Home Assistant (recommended):
 
@@ -83,7 +83,7 @@ Then, if you want Claude to talk to Home Assistant (recommended):
 
 Hard rules can't be bypassed even by an in-app approval. See [SECURITY.md](SECURITY.md) for the full list. Summary:
 
-- Secrets/tokens/credentials are never readable (including your HA token and the addon's own OAuth)
+- Secrets/tokens/credentials are never readable (including your HA token and the app's own OAuth)
 - Destructive Bash (`rm -rf`, `git reset --hard`, `ha core restart`, etc.) is blocked outright
 - Protected files (`configuration.yaml`, `automations.yaml`, etc.) auto-snapshot to `<file>.bak.<timestamp>` before any edit
 - Every tool call is appended to an audit log at `/config/claude-code-messages-audit.log`

@@ -22,13 +22,13 @@ SOFTWARE.
 
 ---
 
-This addon is independently developed. The Claude Code CLI (installed via
+This app is independently developed. The Claude Code CLI (installed via
 the `@anthropic-ai/claude-code` npm package) is a product of Anthropic and
-governed by Anthropic's own terms of service. This addon does not redistribute
+governed by Anthropic's own terms of service. This app does not redistribute
 Anthropic code; it installs the CLI from npm at build time, like any other
 dependency.
 
-Inspired by the Claude Terminal add-on by heytcass
+Inspired by the Claude Terminal app by heytcass
 (https://github.com/heytcass/home-assistant-addons), which proved the concept
-of running Claude Code inside a Home Assistant add-on. This addon shares no
+of running Claude Code inside a Home Assistant app. This app shares no
 source code with that project and is written from scratch.

@@ -1,6 +1,6 @@
 # Claude Code Messages — Security & Privacy
 
-The addon enforces a layered defense: hard rules (code-enforced, can't be bypassed), user-controllable prompts (you decide per-action), and soft rules (guide Claude's behaviour but not enforced).
+The app enforces a layered defense: hard rules (code-enforced, can't be bypassed), user-controllable prompts (you decide per-action), and soft rules (guide Claude's behaviour but not enforced).
 
 **Last reviewed: 2026-06-10 (v0.1.0)**
 
@@ -15,14 +15,14 @@ These fire from the `PreToolUse` hook before any tool runs. They cannot be disab
 These never get read into Claude's context, never get edited, never get deleted. The hook returns "deny" if Claude tries.
 
 - `/config/secrets.yaml`
-- `/config/claude-config/` (the addon's own OAuth dir — Claude can't see its own creds)
+- `/config/claude-config/` (the app's own OAuth dir — Claude can't see its own creds)
 - Anything matching `**/.storage/auth*`
 - Anything matching `**/.storage/onboarding*`
 - Anything matching `**/*token*`, `**/*password*`, `**/*credential*`, `**/.env*`
 
 ### 2. Read-only paths (writes blocked)
 
-- `/addons` — reads allowed (so Claude can reason about installed addons), but Write/Edit/MultiEdit/NotebookEdit are blocked.
+- `/addons` — reads allowed (so Claude can reason about installed apps), but Write/Edit/MultiEdit/NotebookEdit are blocked.
 
 ### 3. Protected files (auto-snapshot before edit)
 
@@ -56,7 +56,7 @@ The hook blocks Bash commands matching any of these patterns. There's no "approv
 
 ### 5. Audit log
 
-Every tool call (Read, Edit, Write, Bash, WebFetch, etc.) — both allowed and blocked — is appended to `/config/claude-code-messages-audit.log` with timestamp, tool name, arguments, and outcome. The file is created mode 0600 on first run. Append-only from the addon's view; rotate or clear it manually.
+Every tool call (Read, Edit, Write, Bash, WebFetch, etc.) — both allowed and blocked — is appended to `/config/claude-code-messages-audit.log` with timestamp, tool name, arguments, and outcome. The file is created mode 0600 on first run. Append-only from the app's view; rotate or clear it manually.
 
 ---
 
@@ -65,7 +65,7 @@ Every tool call (Read, Edit, Write, Bash, WebFetch, etc.) — both allowed and b
 These are ON by default. Turn them off only if you trust Claude to act without confirmation in your environment.
 
 - **Ask before Bash** — every shell command shows an Approve / Reject card. Independent of the destructive list above (which is *always* blocked regardless of this setting).
-- **Ask before WebFetch** — every outbound HTTP fetch shows a card with the URL. You can pick *Allow once* or *Always allow this domain* (the domain list lives in the addon's settings file).
+- **Ask before WebFetch** — every outbound HTTP fetch shows a card with the URL. You can pick *Allow once* or *Always allow this domain* (the domain list lives in the app's settings file).
 
 When the toggle is off, calls go straight through with no prompt — still audit-logged.
 
@@ -88,11 +88,11 @@ These guide Claude's behaviour; they're not enforced by code. Trust them to the 
 ## Privacy
 
 - OAuth credentials live in `/config/claude-config/` only. They're in the **Forbidden** list above, so the tool layer can never read them.
-- The addon does not collect telemetry, usage stats, or crash reports.
-- You can revoke OAuth from your Anthropic dashboard at any time; the addon respects revocation on the next request.
+- The app does not collect telemetry, usage stats, or crash reports.
+- You can revoke OAuth from your Anthropic dashboard at any time; the app respects revocation on the next request.
 - The audit log records the *arguments* passed to tools (file paths, command strings, URL hosts). It does **not** record file contents read by Claude or assistant message text.
 - Conversation history stays on the HAOS host (`/config/claude-config/`'s jsonl files). Never auto-uploaded anywhere except to Anthropic as part of the conversation itself.
-- Image attachments are uploaded to `/data/uploads/` inside the addon, sent to Anthropic as part of the message payload, and not pushed anywhere else.
+- Image attachments are uploaded to `/data/uploads/` inside the app, sent to Anthropic as part of the message payload, and not pushed anywhere else.
 
 ---
 
@@ -102,8 +102,8 @@ Being honest about limits:
 
 - **A user who manually approves a destructive prompt.** Ask-before-Bash makes accidents harder, not impossible.
 - **Plain `rm` of a protected file** — only `rm -rf` is auto-blocked; plain `rm` is allowed if you approve the Bash prompt. Snapshots are your recovery path.
-- **Outbound HTTP to arbitrary domains** — the addon's network egress is not firewalled. WebFetch confirmation is the only gate, and only if `ask_webfetch` is on.
-- **Anthropic-side data handling** — covered by your account's terms with Anthropic, not by this addon.
+- **Outbound HTTP to arbitrary domains** — the app's network egress is not firewalled. WebFetch confirmation is the only gate, and only if `ask_webfetch` is on.
+- **Anthropic-side data handling** — covered by your account's terms with Anthropic, not by this app.
 - **Physical access to the HAOS host.**
 - **A maliciously-crafted CLAUDE.md or prompt** that tricks Claude into framing a harmful action as benign. The hard-rule list above is the real backstop here.
 
