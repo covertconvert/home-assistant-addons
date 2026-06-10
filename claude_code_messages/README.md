@@ -16,6 +16,18 @@ The existing terminal-based Claude addons work, but they're rough on mobile:
 
 This addon wraps the same `claude` CLI but gives it a proper chat UI: bubbles, code blocks with copy buttons, image attachments, explicit Stop button, and inline approve/reject cards for permission prompts.
 
+## Requirements
+
+**Required**
+
+- A **Claude account** with an active Claude Code subscription (Pro, Max, or Team). The addon uses your subscription via OAuth — there is no usage-based API key required and your subscription billing applies as normal. Sign up at [claude.com](https://claude.com) if you don't already have one.
+
+**Optional but recommended**
+
+- A **Home Assistant long-lived access token**, if you want Claude to read entity states, call services, edit automations/scripts/dashboards, or trigger backups. Without it, Claude can still edit YAML files in `/config` but won't be able to interact with HA's live state.
+  - Generate one from **HA → Profile (your avatar) → Security → Long-lived access tokens → Create token**
+  - Paste it into the addon under **Settings → Home Assistant integration**
+
 ## Features
 
 - **OAuth login** — sign in with your Anthropic account; no API key required
@@ -38,11 +50,17 @@ This addon wraps the same `claude` CLI but gives it a proper chat UI: bubbles, c
 
 ## First-run authentication
 
-On first open you'll be prompted to authenticate:
+On first open you'll be prompted to authenticate your Claude account:
 
 1. The addon opens a Claude OAuth link
 2. Sign in on the Anthropic site and paste the code back into the addon
 3. Token is saved to `/config/claude-config/` (persists across addon updates)
+
+Then, if you want Claude to talk to Home Assistant (recommended):
+
+1. Open **Settings → Home Assistant integration**
+2. Paste your HA URL (e.g. `http://homeassistant.local:8123`) and the long-lived token from your HA profile
+3. Toggle the integration on — Claude can now read entity states, call services, and edit your automations
 
 ## Configuration options
 
@@ -63,11 +81,13 @@ On first open you'll be prompted to authenticate:
 
 Hard rules can't be bypassed even by an in-app approval. See [SECURITY.md](SECURITY.md) for the full list. Summary:
 
-- Secrets/tokens/credentials are never readable
-- Destructive Bash (`rm -rf`, `git reset --hard`, `ha core restart`, etc.) require fresh confirmation every time
-- Protected files (`configuration.yaml`, `automations.yaml`, etc.) auto-snapshot before edit, deletion blocked
-- Outbound calls limited to the Anthropic API and your HA instance
-- No telemetry
+- Secrets/tokens/credentials are never readable (including your HA token and the addon's own OAuth)
+- Destructive Bash (`rm -rf`, `git reset --hard`, `ha core restart`, etc.) is blocked outright
+- Protected files (`configuration.yaml`, `automations.yaml`, etc.) auto-snapshot to `<file>.bak.<timestamp>` before any edit
+- Every tool call is appended to an audit log at `/config/claude-code-messages-audit.log`
+- No telemetry, ever
+
+⚠ Make sure your Home Assistant instance is backed up before connecting Claude to it. AI can make mistakes — automations, scripts, and dashboards can be modified or deleted.
 
 ## Credit
 
