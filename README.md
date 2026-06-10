@@ -1,6 +1,6 @@
-# Home Assistant Add-ons by covertconvert
+# Home Assistant Add-ons
 
-Custom Home Assistant add-ons.
+Custom Home Assistant add-ons by covertconvert.
 
 ## Installation
 
@@ -11,7 +11,7 @@ Add this repository to your Home Assistant instance:
 3. Paste this URL: `https://github.com/covertconvert/home-assistant-addons`
 4. Click **Add**, then refresh the store
 
-The add-ons will appear under "Covertconvert's Home Assistant Add-ons".
+The add-ons will appear under "Home Assistant Add-ons".
 
 ## Add-ons in this repository
 
