@@ -1,0 +1,714 @@
+"""FastAPI backend for Claude Code Messages.
+
+Endpoints:
+    GET    /api/sessions                   list sessions
+    POST   /api/sessions                   create a session
+    GET    /api/sessions/{id}/stream       SSE stream of events
+    POST   /api/sessions/{id}/message      send a user message
+    POST   /api/sessions/{id}/interrupt    cancel current generation
+    POST   /api/sessions/{id}/permission   respond approve/reject
+    POST   /api/sessions/{id}/upload       upload an image attachment
+    DELETE /api/sessions/{id}              kill a session
+    GET    /healthz                        liveness
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import time
+import uuid
+from pathlib import Path
+from typing import Any
+
+import aiofiles
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
+
+import projects as projects_store
+from audit import log as audit_log
+from auth import AuthFlow, is_authed, save_token
+from persistence import read_history, session_cost
+from session import SessionManager
+from settings import add_webfetch_domain
+from settings import load as load_settings
+from settings import public_view as settings_public_view
+from settings import save as save_settings
+
+UPLOAD_DIR = Path("/data/uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MAX_UPLOAD_MB = 10
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+app = FastAPI(title="Claude Code Messages", version="0.1.0")
+manager = SessionManager(max_sessions=int(os.environ.get("MAX_SESSIONS", "20")))
+auth_flow: AuthFlow | None = None
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# request_id -> Future that the public /permission endpoint resolves with the
+# user's decision string ("reject" | "allow_once" | "allow_domain"). The hook's
+# HTTP call awaits it.
+PERMISSION_TIMEOUT_S = 600
+pending_permissions: dict[str, asyncio.Future[str]] = {}
+
+# Per-session lock so parallel tool_use blocks (Claude often emits Bash + WebFetch
+# together) surface as serialized prompts instead of overlapping cards. The
+# second hook's HTTP request blocks at acquire() until the first resolves.
+session_permission_locks: dict[str, asyncio.Lock] = {}
+
+
+class CodeBody(BaseModel):
+    code: str
+
+
+class TokenBody(BaseModel):
+    token: str
+
+
+@app.get("/api/auth/status")
+async def auth_status() -> dict[str, bool]:
+    return {"authed": is_authed()}
+
+
+@app.post("/api/auth/start")
+async def auth_start() -> dict[str, str]:
+    import logging
+    import traceback
+    global auth_flow
+    auth_flow = AuthFlow()
+    try:
+        url = await auth_flow.start()
+    except Exception as e:
+        logging.error("auth_start failed: %s\n%s", e, traceback.format_exc())
+        if auth_flow:
+            logging.error("auth buffer: %r", auth_flow._buffer[-1000:])
+        auth_flow = None
+        raise HTTPException(status_code=500, detail=str(e))
+    audit_log("auth", "auth_started", {})
+    return {"url": url}
+
+
+@app.post("/api/auth/complete")
+async def auth_complete(body: CodeBody) -> dict[str, bool]:
+    import logging
+    import traceback
+    global auth_flow
+    if not auth_flow:
+        raise HTTPException(status_code=400, detail="No auth flow in progress")
+    try:
+        await auth_flow.submit_code(body.code)
+    except Exception as e:
+        logging.error("auth_complete failed: %s\n%s", e, traceback.format_exc())
+        if auth_flow:
+            logging.error("auth buffer after submit: %r", auth_flow._buffer[-1500:])
+        audit_log("auth", "auth_failed", {"error": str(e)})
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        auth_flow = None
+    audit_log("auth", "auth_completed", {})
+    return {"ok": True}
+
+
+@app.post("/api/auth/token")
+async def auth_token(body: TokenBody) -> dict[str, bool]:
+    token = body.token.strip()
+    if not token.startswith("sk-ant-"):
+        raise HTTPException(status_code=400, detail="Token must start with sk-ant-")
+    if len(token) < 50:
+        raise HTTPException(status_code=400, detail="Token looks too short")
+    save_token(token)
+    audit_log("auth", "auth_manual_token", {"len": len(token)})
+    return {"ok": True}
+
+
+@app.get("/")
+async def index() -> HTMLResponse:
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    css_v = int((STATIC_DIR / "styles.css").stat().st_mtime)
+    js_v = int((STATIC_DIR / "app.js").stat().st_mtime)
+    html = html.replace("static/styles.css", f"static/styles.css?v={css_v}")
+    html = html.replace("static/app.js", f"static/app.js?v={js_v}")
+    return HTMLResponse(
+        html,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/api/uploads/{name}")
+async def get_upload(name: str) -> FileResponse:
+    # Prevent traversal
+    if "/" in name or ".." in name:
+        raise HTTPException(status_code=400, detail="bad name")
+    path = UPLOAD_DIR / name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(path)
+
+
+class CreateSessionBody(BaseModel):
+    title: str | None = None
+    project_id: str | None = None
+
+
+class UpdateSessionBody(BaseModel):
+    title: str | None = None
+    # Use the literal string "__unset__" to signal "leave unchanged" — None is
+    # a valid value meaning "unassign from any project".
+    project_id: str | None = "__unset__"
+
+
+class MessageBody(BaseModel):
+    text: str
+    attachments: list[str] = []
+
+
+class PermissionBody(BaseModel):
+    # Decisions: "reject" | "allow_once" | "allow_domain".
+    # `approved` retained for legacy callers that only know yes/no.
+    decision: str | None = None
+    approved: bool | None = None
+    request_id: str | None = None
+
+
+class InternalPermissionBody(BaseModel):
+    session_id: str
+    tool_name: str
+    tool_input: dict[str, Any]
+
+
+class ProjectBody(BaseModel):
+    name: str
+
+
+@app.get("/healthz")
+async def healthz() -> dict[str, Any]:
+    return {"ok": True, "sessions": len(manager.sessions)}
+
+
+class SettingsBody(BaseModel):
+    ha_mcp_enabled: bool
+    ha_url: str
+    # Empty string = "keep existing token" so the client never needs to read it
+    # back. Pass a value to update; pass null/empty to leave unchanged.
+    ha_token: str | None = None
+    ask_bash: bool = True
+    ask_webfetch: bool = True
+    # Allows the client to clear the entire allowlist; per-domain adds happen
+    # via the permission flow itself.
+    webfetch_allowed_domains: list[str] | None = None
+
+
+@app.get("/api/settings")
+async def get_settings() -> dict[str, Any]:
+    return settings_public_view(load_settings())
+
+
+@app.post("/api/settings")
+async def update_settings(body: SettingsBody) -> dict[str, Any]:
+    cur = load_settings()
+    new = {
+        **cur,
+        "ha_mcp_enabled": body.ha_mcp_enabled,
+        "ha_url": body.ha_url.strip(),
+        "ask_bash": body.ask_bash,
+        "ask_webfetch": body.ask_webfetch,
+    }
+    if body.ha_token:
+        new["ha_token"] = body.ha_token.strip()
+    if body.webfetch_allowed_domains is not None:
+        new["webfetch_allowed_domains"] = [
+            h.lower().strip() for h in body.webfetch_allowed_domains if h and h.strip()
+        ]
+    save_settings(new)
+    audit_log("settings", "settings_updated", {
+        "ha_mcp_enabled": new["ha_mcp_enabled"],
+        "ha_url_set": bool(new["ha_url"]),
+        "ha_token_set": bool(new["ha_token"]),
+        "ask_bash": new["ask_bash"],
+        "ask_webfetch": new["ask_webfetch"],
+        "webfetch_allowed_count": len(new.get("webfetch_allowed_domains") or []),
+    })
+    return settings_public_view(new)
+
+
+@app.get("/api/sessions")
+async def list_sessions() -> list[dict[str, Any]]:
+    return manager.list()
+
+
+@app.post("/api/sessions")
+async def create_session(body: CreateSessionBody) -> dict[str, Any]:
+    sess = await manager.create(title=body.title, project_id=body.project_id)
+    audit_log(sess.id, "session_created", {"title": sess.title, "project_id": sess.project_id})
+    return {"id": sess.id, "title": sess.title, "project_id": sess.project_id}
+
+
+@app.patch("/api/sessions/{session_id}")
+async def update_session(session_id: str, body: UpdateSessionBody) -> dict[str, Any]:
+    sess = manager.update(session_id, title=body.title, project_id=body.project_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    audit_log(session_id, "session_updated", {"title": sess.title, "project_id": sess.project_id})
+    return {"id": sess.id, "title": sess.title, "project_id": sess.project_id}
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str) -> dict[str, bool]:
+    ok = await manager.delete(session_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
+    audit_log(session_id, "session_deleted", {})
+    return {"ok": True}
+
+
+@app.get("/api/projects")
+async def list_projects() -> list[dict[str, Any]]:
+    return projects_store.load()
+
+
+@app.post("/api/projects")
+async def create_project(body: ProjectBody) -> dict[str, Any]:
+    record = projects_store.create(body.name)
+    audit_log("projects", "project_created", {"id": record["id"], "name": record["name"]})
+    return record
+
+
+@app.patch("/api/projects/{project_id}")
+async def rename_project(project_id: str, body: ProjectBody) -> dict[str, Any]:
+    record = projects_store.rename(project_id, body.name)
+    if not record:
+        raise HTTPException(status_code=404, detail="Project not found")
+    audit_log("projects", "project_renamed", {"id": project_id, "name": record["name"]})
+    return record
+
+
+class NotesBody(BaseModel):
+    notes: str
+
+
+@app.get("/api/projects/{project_id}/notes")
+async def get_project_notes(project_id: str) -> dict[str, str]:
+    return {"notes": projects_store.read_notes(project_id)}
+
+
+@app.put("/api/projects/{project_id}/notes")
+async def put_project_notes(project_id: str, body: NotesBody) -> dict[str, bool]:
+    if not projects_store.write_notes(project_id, body.notes):
+        raise HTTPException(status_code=404, detail="Project not found")
+    audit_log("projects", "project_notes_updated", {"id": project_id, "len": len(body.notes)})
+    return {"ok": True}
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str) -> dict[str, bool]:
+    if not projects_store.delete(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    # Orphan any sessions into Unsorted.
+    for sess in list(manager.sessions.values()):
+        if sess.project_id == project_id:
+            manager.update(sess.id, project_id=None)
+    audit_log("projects", "project_deleted", {"id": project_id})
+    return {"ok": True}
+
+
+@app.get("/api/sessions/{session_id}/stream")
+async def stream_events(session_id: str) -> EventSourceResponse:
+    sess = manager.get(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    async def event_gen():
+        # Atomic snapshot + subscription: every event is delivered exactly once.
+        # Events already in `history` come from `snapshot`; everything emitted
+        # after the subscribe call comes from `queue`. For sessions rehydrated
+        # from disk (no in-memory history yet), seed the snapshot from jsonl.
+        snapshot, queue = sess.subscribe()
+        try:
+            if not snapshot:
+                snapshot = list(read_history(session_id))
+            # Drop permission cards that have already been resolved (or timed
+            # out) — they're interaction-only, not conversation content. Active
+            # ones (still in pending_permissions) stay so a reconnecting client
+            # can still respond.
+            snapshot = [
+                e for e in snapshot
+                if e.get("type") != "permission_request" or e.get("id") in pending_permissions
+            ]
+            if snapshot:
+                yield {"event": "claude", "data": _safe_json({"type": "snapshot", "events": snapshot})}
+            while True:
+                try:
+                    evt = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield {"event": "claude", "data": _safe_json(evt)}
+                    if evt.get("type") == "session_ended":
+                        break
+                except asyncio.TimeoutError:
+                    yield {"event": "ping", "data": str(time.time())}
+        finally:
+            sess.unsubscribe(queue)
+
+    return EventSourceResponse(event_gen())
+
+
+@app.post("/api/sessions/{session_id}/message")
+async def post_message(session_id: str, body: MessageBody) -> dict[str, bool]:
+    sess = await manager.ensure_started(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await sess.send_message(body.text, body.attachments)
+    manager.touch(session_id)
+    audit_log(session_id, "user_message", {
+        "text_len": len(body.text),
+        "attachment_count": len(body.attachments),
+    })
+    return {"ok": True}
+
+
+class ModelBody(BaseModel):
+    model: str | None = None
+
+
+@app.post("/api/sessions/{session_id}/model")
+async def set_model(session_id: str, body: ModelBody) -> dict[str, Any]:
+    sess = await manager.set_model(session_id, body.model)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    audit_log(session_id, "model_changed", {"model": body.model})
+    return {"id": sess.id, "model": sess.model}
+
+
+class PermissionModeBody(BaseModel):
+    mode: str
+
+
+@app.post("/api/sessions/{session_id}/permission_mode")
+async def set_permission_mode(session_id: str, body: PermissionModeBody) -> dict[str, Any]:
+    if body.mode not in ("default", "plan"):
+        raise HTTPException(status_code=400, detail="mode must be 'default' or 'plan'")
+    sess = await manager.set_permission_mode(session_id, body.mode)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    audit_log(session_id, "permission_mode_changed", {"mode": body.mode})
+    return {"id": sess.id, "permission_mode": sess.permission_mode}
+
+
+@app.post("/api/sessions/{session_id}/resume")
+async def resume_session(session_id: str) -> dict[str, bool]:
+    sess = await manager.ensure_started(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    audit_log(session_id, "session_resumed", {})
+    return {"ok": True}
+
+
+@app.post("/api/sessions/{session_id}/clear")
+async def clear_context(session_id: str) -> dict[str, bool]:
+    sess = manager.get(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await sess.clear_context()
+    audit_log(session_id, "context_cleared", {})
+    return {"ok": True}
+
+
+@app.get("/api/sessions/{session_id}/cost")
+async def get_cost(session_id: str) -> dict[str, int]:
+    sess = manager.get(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session_cost(session_id)
+
+
+@app.post("/api/sessions/{session_id}/summarize_fresh")
+async def summarize_fresh(session_id: str) -> dict[str, Any]:
+    """Ask Claude to summarize this chat, then open a new chat seeded with
+    that summary so the conversation can continue without burning context."""
+    from auth import load_token
+    import json as _json
+    import urllib.request
+    import urllib.error
+
+    src = manager.get(session_id)
+    if not src:
+        raise HTTPException(status_code=404, detail="Session not found")
+    token = load_token()
+    if not token:
+        raise HTTPException(status_code=401, detail="No OAuth token saved")
+
+    # Flatten history into a plain transcript for the summarizer.
+    lines: list[str] = []
+    for evt in read_history(session_id):
+        t = evt.get("type")
+        if t == "user_message" and evt.get("text"):
+            lines.append(f"User: {evt['text']}")
+        elif t == "assistant_text" and evt.get("text"):
+            lines.append(f"Assistant: {evt['text']}")
+    if not lines:
+        raise HTTPException(status_code=400, detail="Nothing to summarize yet")
+    transcript = "\n\n".join(lines)[-60000:]  # cap to avoid blowing context
+
+    prompt = (
+        "Summarize the conversation below so a fresh Claude session can pick up where it "
+        "left off. Cover: the user's goal, key decisions made, current state / what was "
+        "just being worked on, any open questions or next steps. Keep it tight — bullets "
+        "are fine. Do not add preamble; start with the summary directly.\n\n"
+        f"=== Transcript ===\n{transcript}\n=== End ==="
+    )
+    body = _json.dumps({
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 1500,
+        "messages": [{"role": "user", "content": prompt}],
+        "system": "You are Claude Code, Anthropic's official CLI for Claude.",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",
+            "Content-Type": "application/json",
+            "User-Agent": "claude-code-messages/0.1",
+        },
+    )
+
+    def _summarize() -> str:
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                payload = _json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Summarize: {e.code} {e.reason}") from e
+        except urllib.error.URLError as e:
+            raise HTTPException(status_code=502, detail=f"Summarize: {e.reason}") from e
+        parts = [b.get("text", "") for b in (payload.get("content") or []) if b.get("type") == "text"]
+        return "".join(parts).strip()
+
+    summary = await asyncio.to_thread(_summarize)
+    if not summary:
+        raise HTTPException(status_code=502, detail="Summarize returned no text")
+
+    new = await manager.create(title=f"{src.title} (continued)", project_id=src.project_id)
+    seed = (
+        "Picking up from a previous chat. Here is the summary of where we left off; "
+        "use it as context and acknowledge briefly, then wait for the next instruction.\n\n"
+        f"{summary}"
+    )
+    await new.send_message(seed, [])
+    audit_log(session_id, "summarize_fresh", {"new_session_id": new.id, "summary_chars": len(summary)})
+    return {"id": new.id, "title": new.title, "project_id": new.project_id, "model": new.model}
+
+
+@app.get("/api/usage")
+async def get_usage() -> dict[str, Any]:
+    """Read Anthropic's rate-limit headers via a 4-token ping. Mirrors what
+    the iOS Claude app and the CLI's `/usage` view show."""
+    from auth import load_token
+    import json as _json
+    import urllib.request
+    import urllib.error
+
+    token = load_token()
+    if not token:
+        raise HTTPException(status_code=401, detail="No OAuth token saved")
+
+    body = _json.dumps({
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 4,
+        "messages": [{"role": "user", "content": "hi"}],
+        "system": "You are Claude Code, Anthropic's official CLI for Claude.",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",
+            "Content-Type": "application/json",
+            "User-Agent": "claude-code-messages/0.1",
+        },
+    )
+
+    def _do() -> dict[str, Any]:
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                hdrs = {k.lower(): v for k, v in resp.headers.items()}
+        except urllib.error.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Anthropic API: {e.code} {e.reason}") from e
+        except urllib.error.URLError as e:
+            raise HTTPException(status_code=502, detail=f"Anthropic API: {e.reason}") from e
+
+        def _pct(key: str) -> float | None:
+            try:
+                return float(hdrs[key])
+            except (KeyError, TypeError, ValueError):
+                return None
+
+        def _ts(key: str) -> int | None:
+            try:
+                return int(hdrs[key])
+            except (KeyError, TypeError, ValueError):
+                return None
+
+        return {
+            "five_hour_pct": _pct("anthropic-ratelimit-unified-5h-utilization"),
+            "five_hour_reset": _ts("anthropic-ratelimit-unified-5h-reset"),
+            "seven_day_pct": _pct("anthropic-ratelimit-unified-7d-utilization"),
+            "seven_day_reset": _ts("anthropic-ratelimit-unified-7d-reset"),
+            "representative": hdrs.get("anthropic-ratelimit-unified-representative-claim"),
+            "status": hdrs.get("anthropic-ratelimit-unified-status"),
+        }
+
+    return await asyncio.to_thread(_do)
+
+
+@app.post("/api/sessions/{session_id}/interrupt")
+async def interrupt(session_id: str) -> dict[str, bool]:
+    sess = manager.get(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if sess.proc is None:
+        return {"ok": True}  # nothing to interrupt
+    await sess.interrupt()
+    audit_log(session_id, "interrupt", {})
+    return {"ok": True}
+
+
+@app.post("/api/sessions/{session_id}/permission")
+async def respond_permission(session_id: str, body: PermissionBody) -> dict[str, bool]:
+    sess = manager.get(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    decision = body.decision
+    if not decision:
+        decision = "allow_once" if body.approved else "reject"
+    if decision not in ("reject", "allow_once", "allow_domain"):
+        raise HTTPException(status_code=400, detail=f"Unknown decision: {decision}")
+    if body.request_id:
+        fut = pending_permissions.pop(body.request_id, None)
+        if fut and not fut.done():
+            fut.set_result(decision)
+    audit_log(session_id, "permission_response", {"decision": decision, "request_id": body.request_id})
+    return {"ok": True}
+
+
+def _host_from_url(url: str) -> str:
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url if "://" in url else f"http://{url}")
+        return (parsed.hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+@app.post("/api/internal/permission")
+async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
+    """Called by the PreToolUse hook when ask_bash / ask_webfetch is on. Emits
+    a permission_request to the active session's SSE stream and blocks until
+    the user picks Reject / Allow once / Allow domain (or times out → deny).
+
+    A per-session lock serializes prompts: if Claude emits Bash + WebFetch in
+    the same turn, both hook subprocesses POST here in parallel but only one
+    card is shown at a time — the second waits at the lock acquire.
+    """
+    sess = manager.get(body.session_id)
+    if not sess:
+        return {"approved": False}
+
+    lock = session_permission_locks.setdefault(body.session_id, asyncio.Lock())
+    async with lock:
+        request_id = uuid.uuid4().hex
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[str] = loop.create_future()
+        pending_permissions[request_id] = fut
+
+        import json as _json
+        cmd = body.tool_input.get("command", "") if body.tool_name == "Bash" else ""
+        url = ""
+        if body.tool_name == "WebFetch":
+            for k in ("url", "URL", "uri", "href"):
+                v = body.tool_input.get(k)
+                if isinstance(v, str) and v:
+                    url = v
+                    break
+        host = _host_from_url(url)
+        description = cmd or url or _json.dumps(body.tool_input)[:240]
+        evt = {
+            "type": "permission_request",
+            "id": request_id,
+            "tool": body.tool_name,
+            "description": description,
+            "input": body.tool_input,
+        }
+        if host:
+            evt["domain"] = host
+        await sess._emit(evt)
+        audit_log(body.session_id, "permission_requested", {
+            "request_id": request_id,
+            "tool": body.tool_name,
+            "domain": host,
+            "summary": description[:200],
+        })
+
+        try:
+            decision = await asyncio.wait_for(fut, timeout=PERMISSION_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            pending_permissions.pop(request_id, None)
+            audit_log(body.session_id, "permission_timeout", {"request_id": request_id})
+            return {"approved": False}
+
+    if decision == "allow_domain" and host:
+        try:
+            await asyncio.to_thread(add_webfetch_domain, host)
+        except Exception as e:
+            audit_log(body.session_id, "permission_allowlist_failed", {"host": host, "error": str(e)})
+    return {"approved": decision in ("allow_once", "allow_domain")}
+
+
+@app.post("/api/sessions/{session_id}/upload")
+async def upload(session_id: str, file: UploadFile = File(...)) -> dict[str, str]:
+    sess = manager.get(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    suffix = Path(file.filename or "img").suffix or ".png"
+    name = f"{uuid.uuid4().hex}{suffix}"
+    dest = UPLOAD_DIR / name
+    size = 0
+    async with aiofiles.open(dest, "wb") as out:
+        while True:
+            chunk = await file.read(64 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > MAX_UPLOAD_MB * 1024 * 1024:
+                await out.close()
+                dest.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail="File too large")
+            await out.write(chunk)
+    audit_log(session_id, "upload", {"path": str(dest), "size": size})
+    return {"path": str(dest), "name": name}
+
+
+def _safe_json(evt: dict) -> str:
+    import json
+    try:
+        return json.dumps(evt)
+    except (TypeError, ValueError):
+        return json.dumps({"type": "error", "data": "unserialisable event"})
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "server:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "8099")),
+        log_level="info",
+    )

@@ -1,0 +1,4 @@
+#!/usr/bin/with-contenv bashio
+# Launch the FastAPI backend
+cd /app
+exec python3 -u server.py

@@ -1,0 +1,3 @@
+#!/usr/bin/with-contenv bashio
+# If backend exits, bring the whole addon down so the supervisor restarts it cleanly
+exec /run/s6/basedir/bin/halt

@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>Claude Code Messages</title>
+<link rel="stylesheet" href="static/styles.css">
+</head>
+<body>
+<div id="auth-screen" hidden>
+  <div class="auth-card">
+    <h2>Sign in to Claude</h2>
+    <p class="auth-step" id="auth-step-1">
+      Tap below to start. We'll open a sign-in page on anthropic.com.
+      <button id="auth-start">Start sign in</button>
+    </p>
+    <p class="auth-step" id="auth-step-2" hidden>
+      Open this link, sign in, and copy the code shown:<br>
+      <a id="auth-link" target="_blank" rel="noopener"></a><br>
+      <input id="auth-code" type="text" inputmode="text" autocomplete="off" placeholder="Paste code here">
+      <button id="auth-submit">Finish</button>
+    </p>
+    <p class="auth-step" id="auth-step-manual">
+      Or paste an existing token (run <code>claude setup-token</code> in any terminal):<br>
+      <input id="auth-token" type="text" inputmode="text" autocomplete="off" placeholder="sk-ant-oat01-…">
+      <button id="auth-token-submit">Save token</button>
+    </p>
+    <p class="auth-error" id="auth-error" hidden></p>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header id="topbar">
+    <button id="drawer-toggle" aria-label="Sessions">&#9776;</button>
+    <h1 id="session-title">New conversation</h1>
+    <button id="chat-actions" aria-label="Chat actions">&#8943;</button>
+    <button id="new-session" class="new-chat-btn" aria-label="New chat">New Chat</button>
+  </header>
+
+  <aside id="drawer" hidden>
+    <div class="drawer-head">
+      <span>Conversations</span>
+      <button id="new-session-drawer" class="new-chat-btn" aria-label="New chat">New Chat</button>
+      <button id="new-project" class="new-project-btn" aria-label="New project">New Project</button>
+      <button id="settings-toggle" aria-label="Settings" title="Settings">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+      <button id="drawer-close" aria-label="Close">&times;</button>
+    </div>
+    <div id="drawer-body"></div>
+  </aside>
+
+  <div id="action-menu" hidden></div>
+
+  <aside id="warn-modal" hidden>
+    <div class="modal-card">
+      <header class="modal-head">
+        <span id="warn-title">Are you sure?</span>
+      </header>
+      <div class="modal-body">
+        <p class="consent-warning" id="warn-body"></p>
+        <div class="consent-actions">
+          <button id="warn-cancel">Cancel</button>
+          <button id="warn-accept" class="danger">I understand, turn off</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <aside id="ha-mcp-consent" hidden>
+    <div class="modal-card">
+      <header class="modal-head">
+        <span>Grant Home Assistant access?</span>
+      </header>
+      <div class="modal-body">
+        <p class="setting-help">
+          Enabling this lets Claude read from and control your Home Assistant
+          instance. With your token, Claude can:
+        </p>
+        <ul class="consent-list">
+          <li>Read every entity's state (lights, locks, climate, cameras, sensors, etc.)</li>
+          <li>Call any HA service — turn devices on/off, lock/unlock doors, change scenes, run scripts, fire automations</li>
+          <li>Read logbook, search entities, evaluate templates</li>
+          <li>Create, modify, and delete automations, scripts, dashboards, and helpers</li>
+          <li>Trigger Home Assistant backups</li>
+        </ul>
+        <p class="setting-help">
+          Scope is whatever your long-lived token can do in HA — admin tokens
+          can do everything. Built-in safety hooks still apply on top: secrets
+          and auth files are off-limits entirely, the installed-addons folder
+          (<code>/addons</code>) is read-only, and destructive shell commands
+          (rm -rf, force pushes, mkfs, etc.) are blocked.
+        </p>
+        <p class="setting-help">
+          You can revoke access at any time from <em>HA → Profile → Security</em>,
+          or just turn this toggle off.
+        </p>
+        <p class="consent-warning">
+          ⚠ Make sure your Home Assistant instance is backed up before enabling.
+          Claude is an AI and can make mistakes — automations, scripts, and
+          dashboards can be modified or deleted, and there's no undo.
+        </p>
+        <div class="consent-actions">
+          <button id="ha-mcp-consent-cancel">Cancel</button>
+          <button id="ha-mcp-consent-allow" class="primary">Allow access</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <aside id="settings" hidden>
+    <div class="modal-card">
+      <header class="modal-head">
+        <span>Settings</span>
+        <button id="settings-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <label class="toggle-row">
+          <span>Ask before running Bash</span>
+          <input type="checkbox" id="ask-bash">
+        </label>
+        <p class="setting-help">
+          On by default. Claude pauses before running shell commands so you can
+          approve or reject each one. Destructive patterns (rm -rf, mkfs, force
+          pushes, etc.) are still blocked outright either way.
+        </p>
+        <label class="toggle-row">
+          <span>Ask before fetching web pages</span>
+          <input type="checkbox" id="ask-webfetch">
+        </label>
+        <p class="setting-help">
+          On by default. Claude pauses before calling <code>WebFetch</code> on a
+          URL. Pick "Allow this domain" once and the same site won't ask again.
+        </p>
+        <div id="webfetch-allowlist" class="allowlist" hidden>
+          <div class="allowlist-head">Allowed domains</div>
+          <ul id="webfetch-allowlist-items"></ul>
+        </div>
+        <label class="toggle-row">
+          <span>Home Assistant integration</span>
+          <input type="checkbox" id="ha-mcp-enabled">
+        </label>
+        <p class="setting-help">
+          Let Claude read and control your Home Assistant. Uses the
+          <a href="https://pypi.org/project/ha-mcp/" target="_blank" rel="noopener">ha-mcp</a>
+          server. Tools run with your token's permissions — write hooks still
+          apply, so addon code stays read-only.
+        </p>
+        <div id="ha-mcp-fields" hidden>
+          <details class="how-to" open>
+            <summary>How to set up</summary>
+            <ol>
+              <li>In Home Assistant, open <em>Profile → Security → Long-Lived Access Tokens</em>.</li>
+              <li>Click <em>Create Token</em>, name it (e.g. <code>Claude Messages</code>), copy the token.</li>
+              <li>Paste your HA URL (e.g. <code>http://homeassistant.local:8123</code>) and the token below.</li>
+              <li>Save and start a new chat — existing chats keep their old setting until restarted.</li>
+            </ol>
+          </details>
+          <label class="field-row">
+            <span>Home Assistant URL</span>
+            <input type="url" id="ha-url" placeholder="http://homeassistant.local:8123" autocomplete="off">
+          </label>
+          <label class="field-row">
+            <span>Long-lived access token</span>
+            <input type="password" id="ha-token" placeholder="Paste token to set or replace" autocomplete="off">
+          </label>
+          <p class="setting-help" id="ha-token-status"></p>
+        </div>
+        <button id="settings-save" class="primary">Save settings</button>
+        <p class="setting-status" id="settings-status" hidden></p>
+        <button id="security-policy-open" class="link-button" type="button">View the app's built-in security policy</button>
+      </div>
+    </div>
+  </aside>
+
+  <aside id="security-modal" hidden>
+    <div class="modal-card">
+      <header class="modal-head">
+        <span>Built-in security policy</span>
+        <button id="security-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <p class="consent-warning">
+          These are the built-in security controls regardless of what has been
+          toggled on or off. They are hard-coded into the app, but AI can make
+          mistakes — always keep your own backups of your Home Assistant config.
+        </p>
+
+        <h4 class="policy-heading">Files Claude can never read or change</h4>
+        <ul class="consent-list">
+          <li><code>/config/secrets.yaml</code></li>
+          <li>Home Assistant auth and onboarding storage (<code>.storage/auth*</code>, <code>.storage/onboarding*</code>)</li>
+          <li>Anything matching <code>*token*</code>, <code>*password*</code>, <code>*credential*</code>, <code>.env*</code></li>
+          <li>The app's own OAuth folder — Claude can't see its own credentials</li>
+        </ul>
+
+        <h4 class="policy-heading">Files Claude can't delete (edits allowed, auto-backup first)</h4>
+        <ul class="consent-list">
+          <li><code>configuration.yaml</code>, <code>automations.yaml</code>, <code>scripts.yaml</code>, <code>scenes.yaml</code></li>
+          <li><code>groups.yaml</code>, <code>customize.yaml</code>, <code>ui-lovelace.yaml</code></li>
+          <li>Lovelace storage files (<code>.storage/lovelace*</code>)</li>
+        </ul>
+        <p class="setting-help">Before any edit, the addon snapshots a copy to <code>&lt;file&gt;.bak.&lt;timestamp&gt;</code>.</p>
+
+        <h4 class="policy-heading">Commands Claude can never run</h4>
+        <ul class="consent-list">
+          <li><code>rm -rf</code> in any form</li>
+          <li><code>git push --force</code>, <code>git reset --hard</code>, <code>git clean -f</code></li>
+          <li><code>ha core restart/stop</code>, <code>ha host reboot/shutdown</code></li>
+          <li><code>dd</code>, <code>mkfs.*</code>, <code>wipefs</code></li>
+          <li>Anything piping into <code>sudo</code>, <code>su</code>, or modifying <code>/etc/</code></li>
+          <li>Pipe-to-shell (<code>curl … | sh</code>, <code>wget … | sh</code>)</li>
+        </ul>
+        <p class="setting-help">
+          These bypass any "remember my approval" mechanism. Even if you've
+          allowed Bash for the session, these always trigger a fresh confirm
+          or are blocked outright.
+        </p>
+
+        <h4 class="policy-heading">Network</h4>
+        <ul class="consent-list">
+          <li>Outbound calls only to Anthropic's API and your configured Home Assistant</li>
+          <li>No telemetry, no analytics, ever</li>
+          <li>Images you attach stay local — only sent as part of the message to Claude</li>
+        </ul>
+
+        <h4 class="policy-heading">Audit log</h4>
+        <p class="setting-help">
+          Every tool call (Read, Edit, Write, Bash, WebFetch, etc.) is appended
+          to <code>/config/claude-code-panel-audit.log</code> with timestamp,
+          tool name, arguments, and outcome. You can review or rotate it any time.
+        </p>
+
+        <h4 class="policy-heading">What this does NOT cover</h4>
+        <ul class="consent-list">
+          <li>A destructive prompt you manually approve anyway</li>
+          <li>Anthropic's handling of your data — see their privacy policy</li>
+          <li>Physical access to the HAOS host</li>
+        </ul>
+      </div>
+    </div>
+  </aside>
+
+  <aside id="project-notes-modal" hidden>
+    <div class="modal-card">
+      <header class="modal-head">
+        <span id="project-notes-title">Project instructions</span>
+        <button id="project-notes-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <p class="setting-help">
+          Markdown appended to Claude's system prompt for every chat in this project.
+          File lives at <code id="project-notes-path">/config/claude-project-notes/…</code>
+          so you can also edit it directly.
+        </p>
+        <textarea id="project-notes-text" rows="14" placeholder="What should Claude know about this project? Goals, constraints, conventions, file paths…"></textarea>
+        <button id="project-notes-save" class="primary">Save</button>
+        <p class="setting-status" id="project-notes-status" hidden></p>
+      </div>
+    </div>
+  </aside>
+
+  <aside id="cost-modal" hidden>
+    <div class="modal-card">
+      <header class="modal-head">
+        <span>Usage</span>
+        <button id="cost-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <div class="usage-block">
+          <div class="usage-head"><span>Current session</span><span id="usage-5h-pct">—</span></div>
+          <div class="usage-bar"><div id="usage-5h-bar"></div></div>
+          <div class="usage-sub" id="usage-5h-reset">Resets —</div>
+        </div>
+        <div class="usage-block">
+          <div class="usage-head"><span>This week</span><span id="usage-7d-pct">—</span></div>
+          <div class="usage-bar"><div id="usage-7d-bar"></div></div>
+          <div class="usage-sub" id="usage-7d-reset">Resets —</div>
+        </div>
+        <p class="setting-help" id="usage-note">Pulled live from Anthropic. Each check uses a few tokens.</p>
+      </div>
+    </div>
+  </aside>
+
+  <main id="thread" tabindex="-1"></main>
+
+  <div id="typing-indicator" hidden>
+    <div class="typing-bubble">
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+    </div>
+    <div class="typing-caption" id="typing-caption"></div>
+  </div>
+
+  <footer id="composer">
+    <div id="attachments"></div>
+    <div class="composer-row">
+      <button id="attach" aria-label="Attach image">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+        </svg>
+      </button>
+      <input type="file" id="file-input" accept="image/*" hidden multiple>
+      <textarea id="input" rows="1" placeholder="Message Claude…"></textarea>
+      <button id="stop" hidden aria-label="Stop">&#9632;</button>
+      <button id="send" aria-label="Send">&#10148;</button>
+    </div>
+    <div id="mode-status" class="mode-status" data-mode="default">Normal mode</div>
+  </footer>
+</div>
+<script type="module" src="static/app.js"></script>
+</body>
+</html>
