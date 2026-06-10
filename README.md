@@ -1,9 +1,5 @@
 # Home Assistant Add-ons
 
-Custom Home Assistant add-ons by [covertconvert](https://github.com/covertconvert).
-
----
-
 ## Claude Code Messages
 
 <img src="claude_code_messages/logo.png" align="right" width="160" alt="Claude Code Messages logo">
