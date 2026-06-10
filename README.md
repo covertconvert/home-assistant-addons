@@ -12,6 +12,8 @@ Custom Home Assistant add-ons by [covertconvert](https://github.com/covertconver
 
 Talk to Claude from your phone with a proper messaging UI — not a webterminal. Edit your automations, debug your dashboards, control your devices, all from the HA companion app on the sofa.
 
+> **Transparency:** this addon was built with the help of Claude Code itself. Flagging upfront because I know some people prefer to avoid AI-assisted projects. The architecture and the security rules are mine; a lot of the implementation was a collaboration with the AI. The full security model is in [SECURITY.md](./claude_code_messages/SECURITY.md) and all the code is open in this repo.
+
 ### Why this exists
 
 Existing Claude-on-HA addons run the CLI inside an xterm.js webterminal. That works on a laptop. On a phone it's painful:

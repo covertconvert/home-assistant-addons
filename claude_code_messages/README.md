@@ -4,6 +4,8 @@ A graphical chat interface for the [Claude Code](https://docs.claude.com/en/docs
 
 ![icon](logo.png)
 
+> **Transparency:** this addon was built with the help of Claude Code itself. Flagging upfront because I know some people prefer to avoid AI-assisted projects. The architecture and the security rules are mine; a lot of the implementation was a collaboration with the AI. The full security model is in [SECURITY.md](SECURITY.md) and all the code is open in this repo.
+
 ## Why
 
 The existing terminal-based Claude addons work, but they're rough on mobile:
