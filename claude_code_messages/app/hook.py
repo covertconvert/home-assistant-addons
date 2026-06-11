@@ -54,7 +54,7 @@ SESSION_ID_KEY = "session_id"
 
 # Server runs inside the same container; the addon binds to 8099 by default.
 PERMISSION_URL = f"http://127.0.0.1:{os.environ.get('PORT', '8099')}/api/internal/permission"
-PERMISSION_TIMEOUT_S = 600  # 10 minutes for the user to respond
+PERMISSION_TIMEOUT_S = None  # wait indefinitely — phone-lock shouldn't deny
 
 
 def _block(reason: str, session_id: str, payload: dict) -> None:

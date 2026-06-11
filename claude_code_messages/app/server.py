@@ -51,7 +51,6 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 # request_id -> Future that the public /permission endpoint resolves with the
 # user's decision string ("reject" | "allow_once" | "allow_domain"). The hook's
 # HTTP call awaits it.
-PERMISSION_TIMEOUT_S = 600
 pending_permissions: dict[str, asyncio.Future[str]] = {}
 
 # Per-session lock so parallel tool_use blocks (Claude often emits Bash + WebFetch
@@ -665,12 +664,12 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
             "summary": description[:200],
         })
 
-        try:
-            decision = await asyncio.wait_for(fut, timeout=PERMISSION_TIMEOUT_S)
-        except asyncio.TimeoutError:
-            pending_permissions.pop(request_id, None)
-            audit_log(body.session_id, "permission_timeout", {"request_id": request_id})
-            return {"approved": False}
+        # No timeout — locking the phone or switching apps shouldn't cause the
+        # CLI to silently get a denial. The hook subprocess on the CLI side
+        # holds its HTTP request open; the CLI proc sits idle until the user
+        # approves, denies, or hits Stop. Hitting Stop kills the CLI which
+        # cleans up the hook subprocess.
+        decision = await fut
 
     if decision == "allow_domain" and host:
         try:
