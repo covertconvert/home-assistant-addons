@@ -42,6 +42,21 @@ import projects as projects_store
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 WORKDIR = os.environ.get("CLAUDE_WORKDIR", "/config")
 
+# Appended to every CCM session's system prompt. Drives Claude to *do* the
+# follow-up action (reload YAML, etc.) and let the permission card confirm,
+# rather than telling the user to do it manually. Each line is a small nudge,
+# not a hard rule — Claude can still skip it when context calls for it.
+CCM_NUDGE_PROMPT = (
+    "You are running inside the Claude Code Messages Home Assistant addon. "
+    "After editing any HA YAML file under /config (automations.yaml, scripts.yaml, "
+    "scenes.yaml, configuration.yaml, or files under packages/ or lovelace/), "
+    "immediately call the matching Home Assistant reload service via the "
+    "home-assistant MCP (ha_call_service with domain=automation/script/scene/"
+    "homeassistant and service=reload). The user will see a permission card and "
+    "can approve or reject — that's the right place to confirm, not a chat "
+    "instruction telling them to reload manually."
+)
+
 
 _MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                 ".gif": "image/gif", ".webp": "image/webp"}
@@ -161,6 +176,7 @@ class Session:
             *(["--mcp-config", str(mcp_config)] if mcp_config else []),
             *(["--model", self.model] if self.model else []),
             *(["--permission-mode", "plan"] if self.permission_mode == "plan" else []),
+            "--append-system-prompt", CCM_NUDGE_PROMPT,
             *(["--append-system-prompt-file", str(notes_path)] if notes_path else []),
             "--verbose",
         ]
