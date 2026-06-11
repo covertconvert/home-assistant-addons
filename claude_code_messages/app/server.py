@@ -723,7 +723,8 @@ async def _refine_handoff(sess) -> None:
         await sess.send_message(
             "I'd like to refine the plan you just showed before any coding. "
             "Ask me one specific question about which part of the plan to "
-            "change, add, or remove. Don't propose a new plan until I answer."
+            "change, add, or remove. Don't propose a new plan until I answer.",
+            silent=True,
         )
         audit_log(sess.id, "refine_handoff_after_send", {})
     except Exception as e:

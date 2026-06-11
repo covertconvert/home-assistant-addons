@@ -311,23 +311,32 @@ class Session:
             logging.warning("claude stderr: %s", text)
             await self._emit({"type": "error", "message": text})
 
-    async def send_message(self, text: str, attachments: list[str] | None = None) -> None:
+    async def send_message(self, text: str, attachments: list[str] | None = None,
+                           *, silent: bool = False) -> None:
+        """Send a user-turn message to the CLI.
+
+        silent=True skips the user_message echo and the auto-title — for
+        server-orchestrated messages (plan handoff / refine) where the user
+        already expressed intent via a button tap and shouldn't see a
+        synthetic message in chat history.
+        """
         import logging
         if self.proc is None or self.proc.stdin is None:
             raise RuntimeError("Session not started")
         attachments = attachments or []
-        logging.info("send_message: text_len=%d attachments=%r", len(text), attachments)
+        logging.info("send_message: text_len=%d attachments=%r silent=%s", len(text), attachments, silent)
 
-        # Local echo so SSE replay includes the user's own turn.
-        await self._emit({
-            "type": "user_message",
-            "text": text,
-            "attachments": attachments,
-        })
+        # Local echo so SSE replay includes the user's own turn (unless silent).
+        if not silent:
+            await self._emit({
+                "type": "user_message",
+                "text": text,
+                "attachments": attachments,
+            })
         await self._emit({"type": "generation_started"})
 
-        # Auto-title from first user message.
-        if self.title == "New chat" and text:
+        # Auto-title from first user message — only for real user turns.
+        if not silent and self.title == "New chat" and text:
             self.title = (text[:40] + "…") if len(text) > 40 else text
 
         content: list[dict[str, Any]] = []
@@ -346,7 +355,7 @@ class Session:
         import logging
         try:
             await self.start()
-            await self.send_message("Proceed with the plan above.")
+            await self.send_message("Proceed with the plan above.", silent=True)
         except Exception as e:
             logging.exception("plan handoff continuation failed")
             await self._emit({"type": "error", "message": f"Plan handoff failed: {e}"})
@@ -360,7 +369,8 @@ class Session:
             await self.send_message(
                 "I'd like to refine the plan you just showed before any coding. "
                 "Ask me one specific question about which part of the plan to "
-                "change, add, or remove. Don't propose a new plan until I answer."
+                "change, add, or remove. Don't propose a new plan until I answer.",
+                silent=True,
             )
         except Exception as e:
             logging.exception("plan refine continuation failed")
