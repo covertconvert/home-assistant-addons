@@ -42,27 +42,46 @@ function persistCollapsedProjects() {
   localStorage.setItem('collapsedProjects', JSON.stringify([...state.collapsedProjects]));
 }
 
-// --- Turn-finished push notification -------------------------------------
-// Only fires when the document is hidden when generation ends. If the user
-// is staring at the chat, the screen update is the notification.
+// --- Focus heartbeat -----------------------------------------------------
+// Server-side push fires on generation_ended; this heartbeat tells the
+// server "the user is still looking at this session, don't push." Without it
+// every reply would buzz the phone even when the user is reading on-screen.
+// Stops the moment the tab is hidden (iOS will suspend us anyway) so this
+// never runs in the background.
 
-async function maybeNotifyTurnFinished() {
-  if (!document.hidden) return;
+const FOCUS_HEARTBEAT_MS = 20000;
+let focusHeartbeatTimer = null;
+
+async function postFocus(focused) {
   if (!state.sessionId) return;
   try {
-    const sess = state.sessions.find(s => s.id === state.sessionId);
-    await api('api/notify/turn_finished', {
+    await api(`api/sessions/${state.sessionId}/focus`, {
       method: 'POST',
-      body: JSON.stringify({
-        session_id: state.sessionId,
-        title: sess ? sess.title : null,
-      }),
+      body: JSON.stringify({ focused }),
     });
-  } catch (err) {
-    // Silent fail — no toast for a missed push, just a console line.
-    console.warn('notify/turn_finished failed:', err.message);
-  }
+  } catch (_) { /* silent — best effort */ }
 }
+
+function startFocusHeartbeat() {
+  if (focusHeartbeatTimer) return;
+  postFocus(true);
+  focusHeartbeatTimer = setInterval(() => postFocus(true), FOCUS_HEARTBEAT_MS);
+}
+
+function stopFocusHeartbeat({ flush = true } = {}) {
+  if (focusHeartbeatTimer) {
+    clearInterval(focusHeartbeatTimer);
+    focusHeartbeatTimer = null;
+  }
+  if (flush) postFocus(false);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopFocusHeartbeat();
+  else startFocusHeartbeat();
+});
+// iOS bfcache / app-suspend path that doesn't always fire visibilitychange.
+window.addEventListener('pagehide', () => stopFocusHeartbeat());
 
 // --- Theme ---------------------------------------------------------------
 // Set as early as possible so the page never flashes the wrong colours.
@@ -222,6 +241,13 @@ function selectSession(id) {
   state.es.addEventListener('ping', () => { /* keep-alive */ });
   state.es.onerror = () => { /* browser auto-reconnects */ };
   renderDrawer();
+  // Mark the newly-selected session focused immediately; the periodic
+  // heartbeat then refreshes every 20s. Skip when hidden — iOS will have
+  // suspended us anyway and the server defaults sessions to "stale".
+  if (!document.hidden) {
+    postFocus(true);
+    startFocusHeartbeat();
+  }
 }
 
 function handleEvent(evt) {
@@ -261,7 +287,6 @@ function handleEvent(evt) {
       break;
     case 'generation_ended':
       setGenerating(false);
-      maybeNotifyTurnFinished();
       if (evt.subtype === 'interrupted') appendSystem('Stopped');
       break;
     case 'system_message':

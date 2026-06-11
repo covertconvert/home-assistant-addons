@@ -30,6 +30,7 @@ import os
 import signal
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,19 @@ from auth import load_token
 from persistence import discover_orphan_sessions, load_index, save_index, session_jsonl_path
 from settings import write_mcp_config_if_enabled
 import projects as projects_store
+
+_generation_ended_hook: Callable[["Session", dict], Awaitable[None]] | None = None
+
+
+def set_generation_ended_hook(
+    hook: Callable[["Session", dict], Awaitable[None]] | None,
+) -> None:
+    """Server installs a coroutine here to react to generation_ended events
+    independently of any connected SSE client. Used so the push-notification
+    fires even when the browser tab has been backgrounded and its SSE pipe
+    has been suspended by the OS."""
+    global _generation_ended_hook
+    _generation_ended_hook = hook
 
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 WORKDIR = os.environ.get("CLAUDE_WORKDIR", "/config")
@@ -141,6 +155,10 @@ class Session:
     # User has tapped "Trust Bash this turn" on a permission card. Subsequent
     # Bash PreToolUse hook calls auto-approve until generation_ended fires.
     _bash_trust_until_turn_end: bool = False
+    # Heartbeat timestamp from the client telling us the user is actively
+    # looking at this session. Zero means stale/away. Server-side
+    # turn-finished push uses this to decide whether to notify.
+    last_focused_at: float = 0.0
 
     def subscribe(self) -> tuple[list[dict[str, Any]], asyncio.Queue[dict[str, Any]]]:
         """Atomic (history snapshot, live queue) — no event is in both.
@@ -213,6 +231,8 @@ class Session:
             self._bash_trust_until_turn_end = False
         for q in list(self._subscribers):
             await q.put(evt)
+        if evt.get("type") == "generation_ended" and _generation_ended_hook is not None:
+            asyncio.create_task(_generation_ended_hook(self, evt))
 
     async def _read_stdout(self) -> None:
         assert self.proc and self.proc.stdout

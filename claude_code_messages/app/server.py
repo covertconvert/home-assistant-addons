@@ -32,7 +32,7 @@ import projects as projects_store
 from audit import log as audit_log
 from auth import AuthFlow, is_authed, save_token
 from persistence import read_history, session_cost
-from session import SessionManager
+from session import Session, SessionManager, set_generation_ended_hook
 from settings import add_webfetch_domain
 from settings import load as load_settings
 from settings import public_view as settings_public_view
@@ -312,19 +312,22 @@ class TurnFinishedBody(BaseModel):
     title: str | None = None
 
 
-@app.post("/api/notify/turn_finished")
-async def notify_turn_finished(body: TurnFinishedBody) -> dict[str, Any]:
-    """Frontend calls this on `generation_ended` when document.hidden is true.
-    Dispatches a push to every configured notify.mobile_app_* device via HA."""
+# Sliding window — if the client said it was focused within this many seconds,
+# we skip the push because the user is already looking at the reply on-screen.
+FOCUS_FRESHNESS_SECONDS = 30
+
+
+async def _send_turn_finished_push(session_id: str, title: str | None) -> dict[str, Any]:
+    """Fire a push to every configured notify.mobile_app_* device via HA.
+    Called both by the server-side generation_ended hook (the reliable path —
+    fires even when the client's SSE has been suspended) and by the legacy
+    client-driven endpoint kept as belt-and-braces."""
     s = load_settings()
     devices = list(s.get("notify_devices") or [])
     url, token = (s.get("ha_url") or "").strip(), (s.get("ha_token") or "").strip()
     if not devices or not url or not token:
         return {"sent": 0, "skipped": True}
-    sess = manager.get(body.session_id)
-    chat_title = (body.title or (sess.title if sess else "")).strip()
-    # The CLI's default for an unstarted session is "New chat", which is
-    # useless as a notification body. Treat it as "no title".
+    chat_title = (title or "").strip()
     if chat_title.lower() in ("", "new chat", "untitled"):
         chat_title = ""
     notification_title = "Claude Code Messages"
@@ -347,10 +350,53 @@ async def notify_turn_finished(body: TurnFinishedBody) -> dict[str, Any]:
             sent += 1
         except Exception as e:
             failures.append({"device": dev, "error": str(e)})
-    audit_log(body.session_id, "notify_turn_finished", {
+    audit_log(session_id, "notify_turn_finished", {
         "sent": sent, "devices": len(devices), "failures": len(failures),
     })
     return {"sent": sent, "failures": failures}
+
+
+async def _on_generation_ended(sess: Session, evt: dict) -> None:
+    """Server-side hook fired when any session emits a generation_ended event.
+    Skips interrupted turns (user pressed Stop — not a "reply ready" signal)
+    and suppresses the push if the client is actively focused on the session."""
+    if evt.get("subtype") == "interrupted":
+        return
+    if time.time() - sess.last_focused_at < FOCUS_FRESHNESS_SECONDS:
+        return
+    try:
+        await _send_turn_finished_push(sess.id, sess.title)
+    except Exception:
+        import logging
+        logging.exception("turn-finished push failed for session %s", sess.id)
+
+
+set_generation_ended_hook(_on_generation_ended)
+
+
+@app.post("/api/notify/turn_finished")
+async def notify_turn_finished(body: TurnFinishedBody) -> dict[str, Any]:
+    """Legacy client-driven path — fires when the client receives
+    generation_ended while the tab is hidden. Server-side hook covers the
+    case where the SSE pipe died first; this endpoint stays as a fallback."""
+    sess = manager.get(body.session_id)
+    title = body.title or (sess.title if sess else None)
+    return await _send_turn_finished_push(body.session_id, title)
+
+
+class FocusBody(BaseModel):
+    focused: bool
+
+
+@app.post("/api/sessions/{session_id}/focus")
+async def session_focus(session_id: str, body: FocusBody) -> dict[str, Any]:
+    """Heartbeat from the client. focused=true while the user is looking at
+    this session; focused=false on visibilitychange→hidden or pagehide."""
+    sess = manager.get(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="session not found")
+    sess.last_focused_at = time.time() if body.focused else 0.0
+    return {"ok": True}
 
 
 @app.delete("/api/data/all")
