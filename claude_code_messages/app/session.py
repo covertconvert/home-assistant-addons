@@ -187,6 +187,15 @@ class Session:
     async def _read_stdout(self) -> None:
         assert self.proc and self.proc.stdout
         import logging
+        # Tee raw CLI stdout to a debug file so a stuck-spinner repro tells us
+        # exactly what event shapes the CLI is emitting. Bounded by truncate
+        # on each session start so it can't grow unbounded.
+        debug_path = "/config/ccm-stdout-debug.log"
+        try:
+            debug_f = open(debug_path, "a", buffering=1)
+            debug_f.write(f"\n=== session {self.id} start ts={time.time():.3f} ===\n")
+        except OSError:
+            debug_f = None
         while True:
             line = await self.proc.stdout.readline()
             if not line:
@@ -215,6 +224,11 @@ class Session:
                 else:
                     await self._emit({"type": "session_ended", "returncode": rc})
                 break
+            if debug_f:
+                try:
+                    debug_f.write(f"{time.time():.3f} {line.decode('utf-8', errors='replace')}")
+                except (OSError, UnicodeError):
+                    pass
             try:
                 raw = json.loads(line.decode("utf-8", errors="replace"))
             except json.JSONDecodeError:
