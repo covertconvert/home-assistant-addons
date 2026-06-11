@@ -16,6 +16,8 @@ const state = {
   turnTokens: 0,
   typingTimer: null,
   turnActivity: null, // {verb, target} — what Claude is currently doing
+  searchQuery: '',
+  searchResults: null, // null = inactive; array = active (possibly empty)
 };
 
 const els = {
@@ -31,6 +33,8 @@ const els = {
   drawerToggle: $('#drawer-toggle'),
   drawerClose: $('#drawer-close'),
   drawerBody: $('#drawer-body'),
+  drawerSearch: $('#drawer-search'),
+  drawerSearchClear: $('#drawer-search-clear'),
   newProject: $('#new-project'),
   newSession: $('#new-session'),
   newSessionDrawer: $('#new-session-drawer'),
@@ -91,6 +95,29 @@ function applyTheme(theme) {
   localStorage.setItem('theme', t);
 }
 applyTheme(localStorage.getItem('theme') || 'dark');
+
+// --- Visual viewport sync ------------------------------------------------
+// iOS WebView doesn't shrink 100dvh when the virtual keyboard opens, and it
+// keeps reporting the home-indicator safe-area-inset-bottom even after the
+// keyboard has covered it. Result: tapping the input pushes the composer up
+// but leaves a huge dead zone between the mode-status row and the keyboard.
+// Track visualViewport.height as --app-h and flip a data attribute the CSS
+// uses to zero out --safe-bottom while the keyboard is open.
+
+function syncViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  document.documentElement.style.setProperty('--app-h', `${vv.height}px`);
+  // 100px threshold separates the iOS URL-bar collapse (~50–60px) from a
+  // real keyboard (~250–400px). Anything bigger than 100 = keyboard.
+  const kbOpen = (window.innerHeight - vv.height) > 100;
+  document.documentElement.dataset.keyboardOpen = kbOpen ? '1' : '0';
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncViewport);
+  window.visualViewport.addEventListener('scroll', syncViewport);
+  syncViewport();
+}
 
 // --- API helpers ---------------------------------------------------------
 
@@ -278,6 +305,11 @@ function handleEvent(evt) {
       break;
     case 'permission_request':
       appendPermissionCard(evt);
+      break;
+    case 'permission_resolved':
+      // Fires when the user answered via notification action while the app
+      // was also open — hide the in-thread card so they don't see stale buttons.
+      removePermissionCard(evt.id);
       break;
     case 'generation_started':
       setGenerating(true, evt.started_at);
@@ -631,6 +663,10 @@ function escapeHtml(s) {
 
 function renderDrawer() {
   els.drawerBody.innerHTML = '';
+  if (state.searchResults !== null) {
+    renderSearchResults();
+    return;
+  }
   const byProject = new Map();
   byProject.set(null, []);
   for (const p of state.projects) byProject.set(p.id, []);
@@ -652,6 +688,83 @@ function renderDrawer() {
     empty.textContent = 'No conversations yet. Tap + to start one.';
     els.drawerBody.appendChild(empty);
   }
+}
+
+function renderSearchResults() {
+  const results = state.searchResults || [];
+  if (results.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'drawer-empty';
+    empty.textContent = state.searchQuery.length < 2
+      ? 'Type at least 2 characters to search.'
+      : `No conversations match “${state.searchQuery}”.`;
+    els.drawerBody.appendChild(empty);
+    return;
+  }
+  const list = document.createElement('ul');
+  list.className = 'search-results';
+  for (const r of results) list.appendChild(renderSearchRow(r));
+  els.drawerBody.appendChild(list);
+}
+
+function renderSearchRow(r) {
+  const li = document.createElement('li');
+  li.className = 'search-row';
+  const title = document.createElement('div');
+  title.className = 'search-row-title';
+  title.textContent = r.title || 'Conversation';
+  if (r.title_match) title.classList.add('title-hit');
+  li.appendChild(title);
+  for (const m of r.matches || []) {
+    const snip = document.createElement('div');
+    snip.className = `search-row-snippet role-${m.role}`;
+    // before / after are user-provided strings — escape via textContent on
+    // wrapper spans, then add a <mark> for the match in the middle.
+    const beforeS = document.createElement('span');
+    beforeS.textContent = (m.before || '').replace(/\s+/g, ' ');
+    const mark = document.createElement('mark');
+    mark.textContent = m.match;
+    const afterS = document.createElement('span');
+    afterS.textContent = (m.after || '').replace(/\s+/g, ' ');
+    snip.append(beforeS, mark, afterS);
+    li.appendChild(snip);
+  }
+  li.addEventListener('click', () => selectSession(r.session_id));
+  return li;
+}
+
+let searchDebounce = null;
+
+async function runSearch(q) {
+  if (q.length < 2) {
+    state.searchResults = q.length === 0 ? null : [];
+    renderDrawer();
+    return;
+  }
+  try {
+    const data = await api(`api/search?q=${encodeURIComponent(q)}`);
+    // Only apply if the query hasn't moved on since we sent the request.
+    if (state.searchQuery !== q) return;
+    state.searchResults = data.results || [];
+    renderDrawer();
+  } catch (_) { /* silent */ }
+}
+
+function onSearchInput() {
+  const q = els.drawerSearch.value;
+  state.searchQuery = q;
+  els.drawerSearchClear.hidden = q.length === 0;
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => runSearch(q.trim()), 200);
+}
+
+function clearSearch() {
+  els.drawerSearch.value = '';
+  state.searchQuery = '';
+  state.searchResults = null;
+  els.drawerSearchClear.hidden = true;
+  renderDrawer();
+  els.drawerSearch.focus();
 }
 
 function renderGroup(projectId, name, sessions) {
@@ -846,6 +959,8 @@ els.fileInput.addEventListener('change', () => {
 
 els.drawerToggle.addEventListener('click', openDrawer);
 els.drawerClose.addEventListener('click', closeDrawer);
+els.drawerSearch.addEventListener('input', onSearchInput);
+els.drawerSearchClear.addEventListener('click', clearSearch);
 els.drawer.addEventListener('click', (e) => { if (e.target === els.drawer) closeDrawer(); });
 els.newSession.addEventListener('click', () => createSession(null));
 els.newSessionDrawer.addEventListener('click', () => { createSession(null); closeDrawer(); });
@@ -1527,7 +1642,16 @@ async function bootApp() {
   authEls.screen.hidden = true;
   authEls.app.hidden = false;
   await loadAll();
-  if (state.sessions.length > 0) selectSession(state.sessions[0].id);
+  // Deep-link from notification tap: ?session=<id> drops the user straight
+  // into the right chat. Falls back to most-recent if the id is unknown.
+  let target = null;
+  try {
+    const qs = new URLSearchParams(window.location.search);
+    const wanted = qs.get('session');
+    if (wanted && state.sessions.some(s => s.id === wanted)) target = wanted;
+  } catch (_) { /* ignore malformed query */ }
+  if (!target && state.sessions.length > 0) target = state.sessions[0].id;
+  if (target) selectSession(target);
 }
 
 // iOS virtual keyboard inside the HA ingress iframe doesn't shrink the
