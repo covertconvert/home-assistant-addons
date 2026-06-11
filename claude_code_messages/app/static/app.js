@@ -1101,7 +1101,6 @@ async function openSettings() {
     safeBashEnabled = (s.bash_auto_allow || []).slice();
     renderSafeBashList();
     notifyDevices = (s.notify_devices || []).slice();
-    renderNotifyDevices();
     settingsEls.enabled.checked = !!s.ha_mcp_enabled;
     settingsEls.url.value = s.ha_url || '';
     settingsEls.token.value = '';
@@ -1110,6 +1109,9 @@ async function openSettings() {
       : 'No token saved yet.';
     settingsEls.status.hidden = true;
     syncHaFieldsVisibility();
+    // Must run AFTER settingsEls.enabled.checked is set — the picker is
+    // gated on the HA-integration toggle and would otherwise see stale state.
+    renderNotifyDevices();
     settingsEls.panel.hidden = false;
   } catch (e) {
     alert(`Failed to load settings: ${e.message}`);
