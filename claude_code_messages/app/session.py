@@ -114,9 +114,15 @@ class Session:
     _subscribers: list[asyncio.Queue[dict[str, Any]]] = field(default_factory=list)
     _reader_task: asyncio.Task | None = None
     _stderr_task: asyncio.Task | None = None
+    _tail_task: asyncio.Task | None = None
     _interrupting: bool = False
     _silent_shutdown: bool = False
     _plan_refine_pending: bool = False
+    # Events seen on stdout — used to dedupe the jsonl-tail backup reader.
+    # CLI v2.1.170 in --output-format stream-json sometimes stops emitting to
+    # stdout mid-turn while still writing to its per-session jsonl. The tail
+    # reader catches what stdout missed.
+    _seen_uuids: set[str] = field(default_factory=set)
 
     def subscribe(self) -> tuple[list[dict[str, Any]], asyncio.Queue[dict[str, Any]]]:
         """Atomic (history snapshot, live queue) — no event is in both.
@@ -177,6 +183,7 @@ class Session:
         )
         self._reader_task = asyncio.create_task(self._read_stdout())
         self._stderr_task = asyncio.create_task(self._read_stderr())
+        self._tail_task = asyncio.create_task(self._tail_jsonl())
 
     async def _emit(self, evt: dict) -> None:
         self.history.append(evt)
@@ -233,6 +240,9 @@ class Session:
                 raw = json.loads(line.decode("utf-8", errors="replace"))
             except json.JSONDecodeError:
                 continue
+            u = raw.get("uuid")
+            if u:
+                self._seen_uuids.add(u)
             for evt in self._translate(raw):
                 await self._emit(evt)
 
@@ -337,6 +347,58 @@ class Session:
                 continue
             logging.warning("claude stderr: %s", text)
             await self._emit({"type": "error", "message": text})
+
+    async def _tail_jsonl(self) -> None:
+        """Backup reader for events the CLI writes to its per-session jsonl
+        but silently drops from stdout. Observed on CLI v2.1.170 in
+        ``--output-format stream-json`` after Edit tool calls — the tool_result
+        and the model's follow-up message land in the jsonl but never on the
+        pipe, so the UI sees the spinner stuck on the Edit forever.
+
+        Dedup is by event ``uuid`` (shared between stdout and jsonl events).
+        Anything stdout has already emitted gets skipped; anything missing is
+        translated and emitted, same shape as the stdout path.
+        """
+        import logging
+        path = session_jsonl_path(self.id)
+        # Start at end-of-file: history was rehydrated from this same jsonl
+        # before _tail_jsonl was launched, so everything currently in the file
+        # is already in self.history. Only new appends matter.
+        pos = path.stat().st_size if path.exists() else 0
+        while self.proc is not None and self.proc.returncode is None:
+            await asyncio.sleep(2.0)
+            try:
+                if not path.exists():
+                    continue
+                size = path.stat().st_size
+                if size < pos:
+                    # File truncated/rotated. Reset.
+                    pos = 0
+                if size == pos:
+                    continue
+                with path.open("r", encoding="utf-8") as f:
+                    f.seek(pos)
+                    chunk = f.read()
+                    pos = f.tell()
+            except OSError as e:
+                logging.warning("ccm: jsonl tail read failed: %s", e)
+                continue
+            for line in chunk.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    raw = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                u = raw.get("uuid")
+                if u and u in self._seen_uuids:
+                    continue
+                if u:
+                    self._seen_uuids.add(u)
+                logging.warning("ccm: jsonl-tail recovered event uuid=%s type=%s", u, raw.get("type"))
+                for evt in self._translate(raw):
+                    await self._emit(evt)
 
     async def send_message(self, text: str, attachments: list[str] | None = None,
                            *, silent: bool = False) -> None:
