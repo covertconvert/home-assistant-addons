@@ -300,7 +300,8 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
 }
 .allowlist li button:hover { color: var(--danger); }
 
-.safe-bash { margin-top: 12px; }
+.safe-bash, .notify-devices { margin-top: 18px; }
+.notify-devices summary { cursor: pointer; font-size: 14px; font-weight: 500; padding: 6px 0; }
 .safe-bash summary { cursor: pointer; font-size: 14px; font-weight: 500; padding: 6px 0; }
 .bulk-toggle { display: flex; gap: 8px; margin: 6px 0 0; }
 .bulk-toggle button {
