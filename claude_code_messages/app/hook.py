@@ -171,9 +171,12 @@ def main() -> None:
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "deny",
                     "permissionDecisionReason": (
-                        "The user wants to refine the plan before implementation. "
-                        "Stay in plan mode. Ask them what they'd like to change, "
-                        "add, or remove, then propose a revised plan."
+                        "The user rejected this plan because they want to refine it. "
+                        "DO NOT call ExitPlanMode again with the same or a slightly "
+                        "modified plan. Instead, send a plain conversational reply "
+                        "that asks the user a specific question: what part of the "
+                        "plan do they want to change, add, or remove? Wait for their "
+                        "answer before proposing any revision."
                     ),
                 }
             }))
