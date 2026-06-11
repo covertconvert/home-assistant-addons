@@ -1,0 +1,73 @@
+#include <tunables/global>
+
+# CCM ships with an AppArmor profile as a defence-in-depth layer on top of
+# the in-app permission system (PreToolUse hooks, secret-file blocklist,
+# per-tool approval cards).
+#
+# The profile starts from the standard HA add-on template (broadly
+# permissive — Claude needs to run arbitrary shell, edit /config, install
+# Python/Node packages, etc.) and then layers `deny` rules for the
+# capabilities, paths, and operations the addon never legitimately needs.
+# AppArmor evaluates denies as overrides, so a later `deny` wins over the
+# earlier blanket grant.
+
+profile addon_claude_code_messages flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Standard HA add-on template — broad access required by s6-overlay,
+  # bashio, the addon's own filesystem, and the tooling Claude invokes
+  # (node, npm, uv, git, python, etc.).
+  capability,
+  file,
+  network,
+  signal,
+  umount,
+
+  /init ix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /usr/local/bin/** ix,
+  /run/{s6,s6-rc*,service}/** ix,
+  /usr/lib/bashio/** ix,
+  /tmp/** rwk,
+  /data/** rw,
+
+  # ---- Defence-in-depth denies ----------------------------------------
+  # None of this should ever be needed in CCM. If something here triggers
+  # a real failure later, it means the trust boundary has shifted — fix
+  # the profile in the same PR as whatever needed the new capability.
+
+  # Kernel-level capabilities the addon doesn't need.
+  deny capability sys_module,     # no kernel module load/unload
+  deny capability sys_rawio,      # no raw I/O / iopl
+  deny capability sys_boot,       # no reboot / kexec
+  deny capability mac_admin,
+  deny capability mac_override,
+  deny capability sys_ptrace,     # no debugging other processes
+
+  # Filesystem locations the addon never writes to.
+  deny /etc/shadow* wl,
+  deny /etc/gshadow* wl,
+  deny /etc/sudoers* wl,
+  deny /etc/sudoers.d/** wl,
+  deny /etc/pam.d/** wl,
+  deny /etc/ssh/** wl,
+  deny /etc/apparmor.d/** wl,
+  deny /boot/** wl,
+  deny /proc/sys/** w,
+  deny /proc/sysrq-trigger w,
+  deny /proc/kcore rwlx,
+  deny /proc/kmem rwlx,
+  deny /proc/mem rwlx,
+  deny /sys/firmware/** wl,
+  deny /sys/kernel/security/** wl,
+  deny /sys/fs/cgroup/** w,
+
+  # No remounting / pivoting / unmounting the addon's view.
+  deny mount,
+  deny remount,
+  deny pivot_root,
+
+  # No ptrace of any process.
+  deny ptrace,
+}
