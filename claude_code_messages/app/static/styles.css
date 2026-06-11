@@ -17,6 +17,43 @@
   --safe-top: env(safe-area-inset-top, 0);
   --safe-bottom: env(safe-area-inset-bottom, 0);
 }
+
+/* Light theme — applied when <html data-theme="light"> or when
+   data-theme="system" and the OS reports a light preference. */
+html[data-theme="light"] {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --panel-2: #eef0f4;
+  --border: #d6dae1;
+  --text: #16181d;
+  --text-dim: #5d6573;
+  --accent: #2563eb;
+  --user: #d4e2ff;
+  --user-text: #11233f;
+  --tool: #f0f2f6;
+  --warn: #fff4dc;
+  --warn-border: #e6c98a;
+  --success: #dff3e7;
+  --danger: #d92b2b;
+}
+@media (prefers-color-scheme: light) {
+  html[data-theme="system"] {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --panel-2: #eef0f4;
+    --border: #d6dae1;
+    --text: #16181d;
+    --text-dim: #5d6573;
+    --accent: #2563eb;
+    --user: #d4e2ff;
+    --user-text: #11233f;
+    --tool: #f0f2f6;
+    --warn: #fff4dc;
+    --warn-border: #e6c98a;
+    --success: #dff3e7;
+    --danger: #d92b2b;
+  }
+}
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -31,8 +68,14 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
 #topbar {
   display: flex; align-items: center; gap: 12px;
   padding: calc(var(--safe-top) + 10px) 14px 10px;
-  background: var(--panel); border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 75%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
   position: sticky; top: 0; z-index: 5;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  #topbar { background: var(--panel); }
 }
 #topbar h1 { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; margin: 0; text-align: left; line-height: 1.25; overflow-wrap: anywhere; }
 #topbar button { font-size: 22px; line-height: 1; min-width: 36px; min-height: 36px; }
@@ -258,6 +301,24 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
 .allowlist li button:hover { color: var(--danger); }
 
 #warn-modal .danger { background: var(--danger); color: white; }
+
+.settings-divider {
+  border: 0; border-top: 1px solid var(--border);
+  margin: 18px 0 12px;
+}
+.danger-zone { display: flex; flex-direction: column; gap: 8px; }
+.danger-zone-head {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--danger); font-weight: 600;
+}
+button.danger {
+  background: transparent; color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 50%, transparent);
+  padding: 8px 12px; border-radius: 8px; font-weight: 500;
+  align-self: flex-start;
+}
+button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+button.danger:active { background: color-mix(in srgb, var(--danger) 20%, transparent); }
 
 #composer {
   display: flex; flex-direction: column; align-items: stretch; gap: 4px;

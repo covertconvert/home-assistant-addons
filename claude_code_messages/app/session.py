@@ -138,6 +138,9 @@ class Session:
     # stdout mid-turn while still writing to its per-session jsonl. The tail
     # reader catches what stdout missed.
     _seen_uuids: set[str] = field(default_factory=set)
+    # User has tapped "Trust Bash this turn" on a permission card. Subsequent
+    # Bash PreToolUse hook calls auto-approve until generation_ended fires.
+    _bash_trust_until_turn_end: bool = False
 
     def subscribe(self) -> tuple[list[dict[str, Any]], asyncio.Queue[dict[str, Any]]]:
         """Atomic (history snapshot, live queue) — no event is in both.
@@ -204,6 +207,10 @@ class Session:
     async def _emit(self, evt: dict) -> None:
         self.history.append(evt)
         self.last_activity = time.time()
+        # End-of-turn resets per-turn Bash trust so the next turn re-asks. Each
+        # user message implicitly starts a fresh trust window.
+        if evt.get("type") == "generation_ended" and self._bash_trust_until_turn_end:
+            self._bash_trust_until_turn_end = False
         for q in list(self._subscribers):
             await q.put(evt)
 
@@ -678,6 +685,13 @@ class SessionManager:
             self._persist()
             return True
         return False
+
+    async def delete_all(self) -> int:
+        """Stop and wipe every session. Returns the number deleted."""
+        ids = list(self.sessions.keys())
+        for sid in ids:
+            await self.delete(sid)
+        return len(ids)
 
     def touch(self, session_id: str) -> None:
         """Update last_activity + persist; called on any session activity."""

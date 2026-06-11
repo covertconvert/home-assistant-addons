@@ -133,3 +133,12 @@ def delete(project_id: str) -> bool:
         return False
     save(new)
     return True
+
+
+def delete_all() -> int:
+    """Wipe every project record. Returns the number deleted. Notes files
+    under NOTES_DIR are left on disk so the user can recover them; only
+    the index is cleared."""
+    projects = load()
+    save([])
+    return len(projects)

@@ -119,6 +119,18 @@
         <button id="settings-close" aria-label="Close">&times;</button>
       </header>
       <div class="modal-body">
+        <label class="field-row">
+          <span>Theme</span>
+          <select id="theme-select">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+            <option value="system">Match system</option>
+          </select>
+        </label>
+        <p class="setting-help">
+          Applies immediately and persists in this browser. Each device chooses
+          its own theme.
+        </p>
         <label class="toggle-row">
           <span>Ask before running Bash</span>
           <input type="checkbox" id="ask-bash">
@@ -173,6 +185,15 @@
         <button id="settings-save" class="primary">Save settings</button>
         <p class="setting-status" id="settings-status" hidden></p>
         <button id="security-policy-open" class="link-button" type="button">View the app's built-in security policy</button>
+        <hr class="settings-divider">
+        <div class="danger-zone">
+          <div class="danger-zone-head">Danger zone</div>
+          <button id="delete-all-data" class="danger" type="button">Delete all chats and projects</button>
+          <p class="setting-help">
+            Wipes every chat, project, and the CLI's per-session transcripts. Saved
+            settings (Bash/WebFetch toggles, HA token, allowlist) are kept.
+          </p>
+        </div>
       </div>
     </div>
   </aside>

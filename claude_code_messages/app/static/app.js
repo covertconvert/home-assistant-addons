@@ -42,6 +42,15 @@ function persistCollapsedProjects() {
   localStorage.setItem('collapsedProjects', JSON.stringify([...state.collapsedProjects]));
 }
 
+// --- Theme ---------------------------------------------------------------
+// Set as early as possible so the page never flashes the wrong colours.
+function applyTheme(theme) {
+  const t = ['dark', 'light', 'system'].includes(theme) ? theme : 'dark';
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem('theme', t);
+}
+applyTheme(localStorage.getItem('theme') || 'dark');
+
 // --- API helpers ---------------------------------------------------------
 
 async function api(path, opts = {}) {
@@ -407,11 +416,15 @@ function appendPermissionCard(evt) {
   card.id = `perm-${evt.id}`;
   const domain = evt.domain || '';
   const isPlan = evt.tool === 'exit_plan_mode' || evt.tool === 'ExitPlanMode';
+  const isBash = evt.tool === 'Bash';
   const domainLine = domain
     ? `<div class="domain-line">Domain: <strong>${escapeHtml(domain)}</strong></div>`
     : '';
   const allowDomainBtn = domain
     ? `<button class="approve-domain">Always Allow</button>`
+    : '';
+  const allowTurnBtn = isBash
+    ? `<button class="approve-turn">Trust Bash this turn</button>`
     : '';
   let title;
   if (isPlan) {
@@ -434,6 +447,7 @@ function appendPermissionCard(evt) {
     <div class="actions">
       <button class="approve">${approveLabel}</button>
       ${allowDomainBtn}
+      ${allowTurnBtn}
       <button class="reject">${rejectLabel}</button>
     </div>
   `;
@@ -442,6 +456,8 @@ function appendPermissionCard(evt) {
   card.querySelector('.reject').addEventListener('click', () => respondPermission(reqId, 'reject'));
   const allowDomain = card.querySelector('.approve-domain');
   if (allowDomain) allowDomain.addEventListener('click', () => respondPermission(reqId, 'allow_domain'));
+  const allowTurn = card.querySelector('.approve-turn');
+  if (allowTurn) allowTurn.addEventListener('click', () => respondPermission(reqId, 'allow_turn'));
   els.thread.appendChild(card);
 }
 
@@ -867,6 +883,7 @@ const settingsEls = {
   toggleBtn: document.getElementById('settings-toggle'),
   closeBtn: document.getElementById('settings-close'),
   saveBtn: document.getElementById('settings-save'),
+  theme: document.getElementById('theme-select'),
   askBash: document.getElementById('ask-bash'),
   askWebfetch: document.getElementById('ask-webfetch'),
   allowlist: document.getElementById('webfetch-allowlist'),
@@ -972,6 +989,7 @@ async function onToggleChange() {
 
 async function openSettings() {
   try {
+    settingsEls.theme.value = localStorage.getItem('theme') || 'dark';
     const s = await api('api/settings');
     settingsEls.askBash.checked = !!s.ask_bash;
     settingsEls.askWebfetch.checked = !!s.ask_webfetch;
@@ -1210,6 +1228,32 @@ document.getElementById('security-close').addEventListener('click', () => { secu
 securityModal.addEventListener('click', (e) => { if (e.target === securityModal) securityModal.hidden = true; });
 settingsEls.saveBtn.addEventListener('click', saveSettings);
 settingsEls.enabled.addEventListener('change', onToggleChange);
+
+settingsEls.theme.addEventListener('change', () => {
+  applyTheme(settingsEls.theme.value);
+});
+
+document.getElementById('delete-all-data').addEventListener('click', async () => {
+  const ok = await confirmDangerous({
+    title: 'Delete everything?',
+    body: 'Wipes every chat, every project, and the CLI\u2019s per-session transcripts. '
+      + 'Settings (Bash/WebFetch toggles, HA token, allowlist) are kept. '
+      + 'This cannot be undone.',
+    acceptLabel: 'Delete all',
+  });
+  if (!ok) return;
+  try {
+    const r = await api('api/data/all', { method: 'DELETE' });
+    settingsEls.status.hidden = false;
+    settingsEls.status.textContent =
+      `Deleted ${r.sessions} chat${r.sessions === 1 ? '' : 's'} and `
+      + `${r.projects} project${r.projects === 1 ? '' : 's'}. Reloading…`;
+    setTimeout(() => location.reload(), 700);
+  } catch (e) {
+    settingsEls.status.hidden = false;
+    settingsEls.status.textContent = `Delete failed: ${e.message}`;
+  }
+});
 
 
 settingsEls.askBash.addEventListener('change', async () => {

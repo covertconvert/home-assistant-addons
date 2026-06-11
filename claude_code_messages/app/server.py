@@ -233,6 +233,16 @@ async def update_settings(body: SettingsBody) -> dict[str, Any]:
     return settings_public_view(new)
 
 
+@app.delete("/api/data/all")
+async def delete_all_data() -> dict[str, int]:
+    """Wipe every session and project. Settings (Bash/WebFetch toggles,
+    HA token, allowlist) are intentionally preserved."""
+    n_sessions = await manager.delete_all()
+    n_projects = projects_store.delete_all()
+    audit_log("data", "delete_all", {"sessions": n_sessions, "projects": n_projects})
+    return {"sessions": n_sessions, "projects": n_projects}
+
+
 @app.get("/api/sessions")
 async def list_sessions() -> list[dict[str, Any]]:
     return manager.list()
@@ -591,12 +601,19 @@ async def respond_permission(session_id: str, body: PermissionBody) -> dict[str,
     decision = body.decision
     if not decision:
         decision = "allow_once" if body.approved else "reject"
-    if decision not in ("reject", "allow_once", "allow_domain"):
+    if decision not in ("reject", "allow_once", "allow_domain", "allow_turn"):
         raise HTTPException(status_code=400, detail=f"Unknown decision: {decision}")
+    # allow_turn: set the per-turn Bash trust flag, then resolve the awaiting
+    # future as a regular allow_once so the current call proceeds.
+    if decision == "allow_turn":
+        sess._bash_trust_until_turn_end = True
+        resolve_with = "allow_once"
+    else:
+        resolve_with = decision
     if body.request_id:
         fut = pending_permissions.pop(body.request_id, None)
         if fut and not fut.done():
-            fut.set_result(decision)
+            fut.set_result(resolve_with)
     audit_log(session_id, "permission_response", {"decision": decision, "request_id": body.request_id})
     return {"ok": True}
 
@@ -736,6 +753,16 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
     sess = manager.get(body.session_id)
     if not sess:
         return {"approved": False}
+
+    # Per-turn Bash trust: the user has already approved "trust Bash this turn"
+    # on an earlier card. Skip the prompt entirely until generation_ended resets
+    # the flag. Only applies to Bash — WebFetch/MCP still ask each time.
+    if body.tool_name == "Bash" and sess._bash_trust_until_turn_end:
+        audit_log(body.session_id, "permission_auto_allowed", {
+            "tool": body.tool_name,
+            "reason": "bash_trust_turn",
+        })
+        return {"approved": True}
 
     lock = session_permission_locks.setdefault(body.session_id, asyncio.Lock())
     async with lock:
