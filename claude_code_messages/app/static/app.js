@@ -15,6 +15,7 @@ const state = {
   turnStartedAt: 0,
   turnTokens: 0,
   typingTimer: null,
+  turnActivity: null, // {verb, target} — what Claude is currently doing
 };
 
 const els = {
@@ -210,9 +211,13 @@ function handleEvent(evt) {
       break;
     case 'tool_use':
       appendToolCard(evt);
+      state.turnActivity = activityFor(evt);
+      if (state.generating) updateTypingCaption();
       break;
     case 'tool_result':
       updateToolCard(evt);
+      state.turnActivity = null; // back to "Thinking"
+      if (state.generating) updateTypingCaption();
       break;
     case 'permission_request':
       appendPermissionCard(evt);
@@ -481,6 +486,7 @@ function setGenerating(on, startedAt) {
     // instead of resetting to 0s. Falls back to client clock if absent.
     state.turnStartedAt = startedAt || Date.now();
     state.turnTokens = 0;
+    state.turnActivity = null;
     indicator.hidden = false;
     updateTypingCaption();
     clearInterval(state.typingTimer);
@@ -495,12 +501,42 @@ function setGenerating(on, startedAt) {
 function updateTypingCaption() {
   const caption = document.getElementById('typing-caption');
   const secs = Math.max(0, Math.floor((Date.now() - state.turnStartedAt) / 1000));
-  const parts = [`${secs}s`];
+  const a = state.turnActivity;
+  const activity = a ? (a.target ? `${a.verb} ${a.target}` : a.verb) : 'Thinking';
+  const parts = [activity, `${secs}s`];
   if (state.turnTokens) {
     const t = state.turnTokens;
     parts.push(t >= 1000 ? `${(t / 1000).toFixed(1)}k tokens` : `${t} tokens`);
   }
   caption.textContent = parts.join(' · ');
+}
+
+function activityFor(evt) {
+  const name = evt.name || '?';
+  const summary = (evt.summary || '').toString().trim();
+  let verb;
+  if (name === 'Read') verb = 'Reading';
+  else if (name === 'Bash') verb = 'Running';
+  else if (name === 'Grep' || name === 'Glob') verb = 'Searching';
+  else if (name === 'Edit' || name === 'MultiEdit' || name === 'Write' || name === 'NotebookEdit') verb = 'Editing';
+  else if (name === 'WebFetch') verb = 'Fetching';
+  else if (name === 'ExitPlanMode') verb = 'Finalizing plan';
+  else if (name.startsWith('mcp__')) verb = 'Calling';
+  else verb = name;
+
+  let target = summary;
+  // For file paths, prefer just the basename so the caption stays readable.
+  if (target && target.startsWith('/') && !target.includes(' ') && !target.includes('\n')) {
+    const last = target.split('/').pop();
+    if (last) target = last;
+  }
+  // For MCP tools, strip the noisy server prefix → "ha_call_service"
+  if (name.startsWith('mcp__')) {
+    target = name.split('__').slice(-1)[0];
+  }
+  // Cap target length so a giant Bash command doesn't blow out the caption.
+  if (target.length > 40) target = target.slice(0, 37) + '…';
+  return { verb, target };
 }
 
 function addUsageTokens(evt) {
