@@ -30,7 +30,7 @@ cat > "$SETTINGS" <<'JSON'
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Read|Write|Edit|MultiEdit|NotebookEdit|WebFetch",
+        "matcher": "Bash|Read|Write|Edit|MultiEdit|NotebookEdit|WebFetch|ExitPlanMode",
         "hooks": [
           {
             "type": "command",
