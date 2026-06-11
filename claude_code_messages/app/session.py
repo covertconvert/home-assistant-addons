@@ -261,6 +261,13 @@ class Session:
                         "summary": _tool_summary(name, inp),
                         "input": inp,
                     })
+            # CLI v2.1.170 sometimes ends a turn cleanly (assistant message with
+            # stop_reason=end_turn) without emitting a follow-up `result` event.
+            # Without that, the UI's spinner runs forever. Synthesize an end on
+            # any terminal stop_reason — a duplicate generation_ended (if the
+            # CLI does later emit result) is harmless; a missing one isn't.
+            if msg.get("stop_reason") in ("end_turn", "stop_sequence", "max_tokens"):
+                out.append({"type": "generation_ended", "subtype": "success"})
             return out
 
         if kind == "user":

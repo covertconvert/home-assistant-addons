@@ -175,6 +175,11 @@ def _translate(raw: dict) -> Iterator[dict]:
                     "summary": _tool_summary(name, inp),
                     "input": inp,
                 }
+        # Mirror Session._translate: synthesize a generation_ended on a
+        # terminal stop_reason so a rehydrated session (addon restart) doesn't
+        # come back with the spinner still spinning.
+        if msg.get("stop_reason") in ("end_turn", "stop_sequence", "max_tokens"):
+            yield {"type": "generation_ended", "subtype": "success"}
 
 
 def session_cost(session_id: str) -> dict[str, int]:
