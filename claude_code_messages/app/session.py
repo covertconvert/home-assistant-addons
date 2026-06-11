@@ -116,6 +116,7 @@ class Session:
     _stderr_task: asyncio.Task | None = None
     _interrupting: bool = False
     _plan_handoff_pending: bool = False
+    _plan_refine_pending: bool = False
 
     def subscribe(self) -> tuple[list[dict[str, Any]], asyncio.Queue[dict[str, Any]]]:
         """Atomic (history snapshot, live queue) — no event is in both.
@@ -168,6 +169,11 @@ class Session:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            # New process group so we can killpg() the whole tree on stop.
+            # The `claude` binary is a wrapper that spawns a node child; a
+            # plain SIGINT to the parent doesn't reach the child, which is
+            # why the stop button used to be dead during long generations.
+            start_new_session=True,
         )
         self._reader_task = asyncio.create_task(self._read_stdout())
         self._stderr_task = asyncio.create_task(self._read_stderr())
@@ -197,6 +203,14 @@ class Session:
                     self._plan_handoff_pending = False
                     self.proc = None
                     asyncio.create_task(self._continue_after_plan_handoff())
+                elif self._plan_refine_pending:
+                    # Plan-mode refine handoff. User tapped Refine; the CLI
+                    # crashes the same way as on approve. Respawn still in
+                    # plan mode and auto-inject a "ask me what to change"
+                    # message so Claude asks a question instead of resubmitting.
+                    self._plan_refine_pending = False
+                    self.proc = None
+                    asyncio.create_task(self._continue_after_plan_refine())
                 elif self._interrupting:
                     # User-initiated stop. The subprocess will be respawned on
                     # the next message via ensure_started — keep the SSE stream
@@ -331,23 +345,40 @@ class Session:
             await self._emit({"type": "error", "message": f"Plan handoff failed: {e}"})
             await self._emit({"type": "generation_ended", "subtype": "error"})
 
+    async def _continue_after_plan_refine(self) -> None:
+        """Respawn after a refine-plan handoff and ask Claude to seek clarification."""
+        import logging
+        try:
+            await self.start()
+            await self.send_message(
+                "I'd like to refine the plan you just showed before any coding. "
+                "Ask me one specific question about which part of the plan to "
+                "change, add, or remove. Don't propose a new plan until I answer."
+            )
+        except Exception as e:
+            logging.exception("plan refine continuation failed")
+            await self._emit({"type": "error", "message": f"Plan refine failed: {e}"})
+            await self._emit({"type": "generation_ended", "subtype": "error"})
+
     async def respond_to_permission(self, approve: bool) -> None:
         # Permission flow is enforced by the PreToolUse hook (security.py).
         # Reserved for a future in-app approval channel.
         return
 
     async def interrupt(self) -> None:
-        # Hard-stop: SIGINT → SIGTERM → SIGKILL. The CLI runs in stream-json
-        # mode with plain pipes, so there's no keystroke channel — signals are
-        # the only way to cancel mid-generation. Escalating guarantees the
-        # process actually dies regardless of how the CLI handles SIGINT.
+        # Hard-stop: SIGINT → SIGTERM → SIGKILL targeting the whole process
+        # group (start_new_session=True at spawn). The `claude` binary is a
+        # wrapper that spawns a node child; signalling only the wrapper used to
+        # leave the node child alive — the UI's Stop button looked dead until
+        # the CLI eventually self-exited.
         if not self.proc or self.proc.returncode is not None:
             return
         self._interrupting = True
+        pgid = self.proc.pid
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
             try:
-                self.proc.send_signal(sig)
-            except ProcessLookupError:
+                os.killpg(pgid, sig)
+            except (ProcessLookupError, PermissionError):
                 self._interrupting = False
                 return
             try:
@@ -371,12 +402,22 @@ class Session:
         await self._emit({"type": "system_message", "text": "Context cleared"})
 
     async def stop(self) -> None:
+        # killpg targets the whole process group so the node child the
+        # `claude` wrapper spawns dies too. Falls back to direct kill on
+        # any oddity.
         if self.proc and self.proc.returncode is None:
-            self.proc.terminate()
+            pgid = self.proc.pid
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
             try:
                 await asyncio.wait_for(self.proc.wait(), timeout=3)
             except asyncio.TimeoutError:
-                self.proc.kill()
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
         self.proc = None
 
 
@@ -460,6 +501,10 @@ class SessionManager:
         if not sess:
             return None
         sess.model = model
+        # Mark as interrupting so the kill emits generation_ended (not
+        # session_ended). Otherwise the UI flashes a stale "Session ended —
+        # Resume" banner even though the next message will respawn cleanly.
+        sess._interrupting = True
         await sess.stop()
         self._persist()
         return sess
@@ -473,6 +518,8 @@ class SessionManager:
         if not sess:
             return None
         sess.permission_mode = mode
+        # Same as set_model: suppress session_ended on the mode-switch kill.
+        sess._interrupting = True
         await sess.stop()
         self._persist()
         return sess

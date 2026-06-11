@@ -678,21 +678,27 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
         except Exception as e:
             audit_log(body.session_id, "permission_allowlist_failed", {"host": host, "error": str(e)})
     if (
-        decision in ("allow_once", "allow_domain")
-        and body.tool_name in ("ExitPlanMode", "exit_plan_mode")
+        body.tool_name in ("ExitPlanMode", "exit_plan_mode")
         and sess.permission_mode == "plan"
     ):
-        # Plan-mode handoff. The CLI was started with --permission-mode plan as
-        # a process-lifetime flag and crashes a few seconds after ExitPlanMode
-        # is approved. Flip the stored mode to "default" so the next respawn
-        # drops the flag, and arm `_plan_handoff_pending` so when the crash
-        # propagates to _read_stdout we transparently respawn + auto-send a
-        # "Proceed with the plan above" message instead of showing
-        # "Session ended". The user sees one continuous turn.
-        sess.permission_mode = "default"
-        sess._plan_handoff_pending = True
-        manager._persist()
-        audit_log(body.session_id, "permission_mode_changed", {"mode": "default", "reason": "exit_plan_mode_approved"})
+        # Plan-mode flow. The CLI was started with --permission-mode plan as a
+        # process-lifetime flag and always crashes a few seconds after
+        # ExitPlanMode resolves (whether allowed OR denied — the CLI can't
+        # actually transition mid-process). So for both branches we let the
+        # CLI proceed (return approved=True) and arm the right pending flag.
+        # When _read_stdout sees the crash it inspects the flag and
+        # transparently respawns + auto-injects the right next message.
+        if decision in ("allow_once", "allow_domain"):
+            # Approve → switch to default mode and proceed with implementation.
+            sess.permission_mode = "default"
+            sess._plan_handoff_pending = True
+            manager._persist()
+            audit_log(body.session_id, "permission_mode_changed", {"mode": "default", "reason": "exit_plan_mode_approved"})
+        else:
+            # Refine → stay in plan mode, prompt Claude to ask what to change.
+            sess._plan_refine_pending = True
+            audit_log(body.session_id, "plan_refine_requested", {})
+        return {"approved": True}
     return {"approved": decision in ("allow_once", "allow_domain")}
 
 
