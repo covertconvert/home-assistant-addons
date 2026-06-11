@@ -115,6 +115,7 @@ class Session:
     _reader_task: asyncio.Task | None = None
     _stderr_task: asyncio.Task | None = None
     _interrupting: bool = False
+    _silent_shutdown: bool = False
     _plan_handoff_pending: bool = False
     _plan_refine_pending: bool = False
 
@@ -204,13 +205,19 @@ class Session:
                     self.proc = None
                     asyncio.create_task(self._continue_after_plan_handoff())
                 elif self._plan_refine_pending:
-                    # Plan-mode refine handoff. User tapped Refine; the CLI
-                    # crashes the same way as on approve. Respawn still in
-                    # plan mode and auto-inject a "ask me what to change"
-                    # message so Claude asks a question instead of resubmitting.
+                    # Plan-mode refine handoff. User tapped Refine; the server
+                    # killed the proc immediately (so Claude doesn't generate
+                    # an interim "ok proceeding…" before any natural crash).
+                    # Respawn still in plan mode and auto-inject a "ask me what
+                    # to change" message so Claude asks a question instead of
+                    # resubmitting.
                     self._plan_refine_pending = False
                     self.proc = None
                     asyncio.create_task(self._continue_after_plan_refine())
+                elif self._silent_shutdown:
+                    # Mode/model switch kill. We do not want any banner —
+                    # the next message will respawn the proc cleanly.
+                    self._silent_shutdown = False
                 elif self._interrupting:
                     # User-initiated stop. The subprocess will be respawned on
                     # the next message via ensure_started — keep the SSE stream
@@ -366,26 +373,40 @@ class Session:
         return
 
     async def interrupt(self) -> None:
-        # Hard-stop: SIGINT → SIGTERM → SIGKILL targeting the whole process
-        # group (start_new_session=True at spawn). The `claude` binary is a
-        # wrapper that spawns a node child; signalling only the wrapper used to
-        # leave the node child alive — the UI's Stop button looked dead until
-        # the CLI eventually self-exited.
+        # Hard-stop: SIGTERM → SIGKILL. The `claude` binary is a wrapper that
+        # spawns a node child; signalling only the wrapper leaves the child
+        # alive. We try the process group first (start_new_session=True at
+        # spawn) and fall back to a direct signal so a missing/wrong pgid
+        # doesn't leave the proc up. We also skip SIGINT — the wrapper used
+        # to trap it without forwarding, which is exactly why Stop looked
+        # dead.
         if not self.proc or self.proc.returncode is not None:
             return
         self._interrupting = True
-        pgid = self.proc.pid
-        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(pgid, sig)
-            except (ProcessLookupError, PermissionError):
-                self._interrupting = False
-                return
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            self._signal_all(sig)
             try:
                 await asyncio.wait_for(self.proc.wait(), timeout=1.0)
                 return
             except asyncio.TimeoutError:
                 continue
+        self._interrupting = False
+
+    def _signal_all(self, sig: int) -> None:
+        """Send sig to the whole process group, then to the direct child as
+        belt-and-suspenders. Either may fail; that's fine — only one needs to
+        land for the proc to die."""
+        if not self.proc:
+            return
+        pid = self.proc.pid
+        try:
+            os.killpg(os.getpgid(pid), sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        try:
+            self.proc.send_signal(sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
 
     async def clear_context(self) -> None:
         """Wipe this thread's context: stop the CLI process, delete the jsonl
@@ -402,22 +423,13 @@ class Session:
         await self._emit({"type": "system_message", "text": "Context cleared"})
 
     async def stop(self) -> None:
-        # killpg targets the whole process group so the node child the
-        # `claude` wrapper spawns dies too. Falls back to direct kill on
-        # any oddity.
+        # SIGTERM the whole tree, escalate to SIGKILL on timeout.
         if self.proc and self.proc.returncode is None:
-            pgid = self.proc.pid
-            try:
-                os.killpg(pgid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
+            self._signal_all(signal.SIGTERM)
             try:
                 await asyncio.wait_for(self.proc.wait(), timeout=3)
             except asyncio.TimeoutError:
-                try:
-                    os.killpg(pgid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
+                self._signal_all(signal.SIGKILL)
         self.proc = None
 
 
@@ -501,10 +513,9 @@ class SessionManager:
         if not sess:
             return None
         sess.model = model
-        # Mark as interrupting so the kill emits generation_ended (not
-        # session_ended). Otherwise the UI flashes a stale "Session ended —
-        # Resume" banner even though the next message will respawn cleanly.
-        sess._interrupting = True
+        # Silent shutdown: the kill should emit no banner at all. The next
+        # message respawns the proc cleanly with the new flag.
+        sess._silent_shutdown = True
         await sess.stop()
         self._persist()
         return sess
@@ -518,8 +529,7 @@ class SessionManager:
         if not sess:
             return None
         sess.permission_mode = mode
-        # Same as set_model: suppress session_ended on the mode-switch kill.
-        sess._interrupting = True
+        sess._silent_shutdown = True
         await sess.stop()
         self._persist()
         return sess

@@ -682,24 +682,39 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
         and sess.permission_mode == "plan"
     ):
         # Plan-mode flow. The CLI was started with --permission-mode plan as a
-        # process-lifetime flag and always crashes a few seconds after
-        # ExitPlanMode resolves (whether allowed OR denied — the CLI can't
-        # actually transition mid-process). So for both branches we let the
-        # CLI proceed (return approved=True) and arm the right pending flag.
-        # When _read_stdout sees the crash it inspects the flag and
-        # transparently respawns + auto-injects the right next message.
+        # process-lifetime flag, so any ExitPlanMode resolution it processes
+        # ends with the CLI crashing. Both Approve and Refine route through a
+        # transparent kill-and-respawn:
+        #
+        # - Approve: return approved=True, let the CLI run the tool and crash
+        #   naturally. _read_stdout sees _plan_handoff_pending and respawns in
+        #   default mode with "Proceed with the plan above".
+        #
+        # - Refine: arm _plan_refine_pending and kill the proc ourselves a
+        #   moment after returning to the hook. Killing eagerly stops Claude
+        #   from generating any "ok proceeding…" interim text between the
+        #   tool denial and the respawn. _read_stdout respawns in plan mode
+        #   with an "ask me what to change" message.
         if decision in ("allow_once", "allow_domain"):
-            # Approve → switch to default mode and proceed with implementation.
             sess.permission_mode = "default"
             sess._plan_handoff_pending = True
             manager._persist()
             audit_log(body.session_id, "permission_mode_changed", {"mode": "default", "reason": "exit_plan_mode_approved"})
+            return {"approved": True}
         else:
-            # Refine → stay in plan mode, prompt Claude to ask what to change.
             sess._plan_refine_pending = True
             audit_log(body.session_id, "plan_refine_requested", {})
-        return {"approved": True}
+            asyncio.create_task(_force_refine_kill(sess))
+            return {"approved": False}
     return {"approved": decision in ("allow_once", "allow_domain")}
+
+
+async def _force_refine_kill(sess) -> None:
+    """Kill the plan-mode proc shortly after the hook response goes out, so
+    Claude doesn't generate a misleading interim message in the window between
+    the tool denial and the respawn."""
+    await asyncio.sleep(0.05)
+    await sess.stop()
 
 
 @app.post("/api/sessions/{session_id}/upload")
