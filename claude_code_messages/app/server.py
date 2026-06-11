@@ -677,6 +677,20 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
             await asyncio.to_thread(add_webfetch_domain, host)
         except Exception as e:
             audit_log(body.session_id, "permission_allowlist_failed", {"host": host, "error": str(e)})
+    if (
+        decision in ("allow_once", "allow_domain")
+        and body.tool_name in ("ExitPlanMode", "exit_plan_mode")
+        and sess.permission_mode == "plan"
+    ):
+        # The CLI is locked to plan mode for its whole lifetime (it was started
+        # with --permission-mode plan). When the hook returns "allow" for
+        # ExitPlanMode the CLI crashes a few seconds later because it can't
+        # actually leave plan mode mid-process. Flip the session flag here so
+        # the next respawn (Resume button, or next message) drops the
+        # --permission-mode plan flag and the CLI continues cleanly.
+        sess.permission_mode = "default"
+        manager._persist()
+        audit_log(body.session_id, "permission_mode_changed", {"mode": "default", "reason": "exit_plan_mode_approved"})
     return {"approved": decision in ("allow_once", "allow_domain")}
 
 
