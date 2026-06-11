@@ -1,5 +1,5 @@
 name: Claude Code Messages
-version: "0.1.0"
+version: "0.1.1"
 slug: claude_code_messages
 description: Graphical chat interface for the Claude Code CLI, designed for the HA companion app
 arch:
@@ -22,7 +22,9 @@ options:
   CLAUDE_WORKDIR: "/config"
   AUDIT_LOG: "/config/claude-code-messages-audit.log"
   MAX_SESSIONS: 20
+  PORT: "8099"
 schema:
   CLAUDE_WORKDIR: str
   AUDIT_LOG: str
   MAX_SESSIONS: int
+  PORT: str

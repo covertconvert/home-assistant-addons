@@ -1,4 +1,5 @@
 #!/usr/bin/with-contenv bashio
 # Launch the FastAPI backend
 cd /app
+export PORT="$(bashio::config 'PORT' '8099')"
 exec python3 -u server.py

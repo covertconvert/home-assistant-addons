@@ -91,6 +91,7 @@ async function deleteSession(id) {
     els.thread.innerHTML = '';
     els.title.textContent = 'New conversation';
     if (state.es) { state.es.close(); state.es = null; }
+    setGenerating(false);
   }
   renderDrawer();
 }
@@ -176,6 +177,7 @@ async function uploadFile(file) {
 function selectSession(id) {
   state.sessionId = id;
   els.thread.innerHTML = '';
+  setGenerating(false);
   const sess = state.sessions.find(s => s.id === id);
   els.title.textContent = sess?.title || 'Conversation';
   renderModeToggle(sess?.permission_mode || 'default');

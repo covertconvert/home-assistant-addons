@@ -314,12 +314,24 @@ class Session:
         return
 
     async def interrupt(self) -> None:
-        if self.proc and self.proc.returncode is None:
-            self._interrupting = True
+        # Hard-stop: SIGINT → SIGTERM → SIGKILL. The CLI runs in stream-json
+        # mode with plain pipes, so there's no keystroke channel — signals are
+        # the only way to cancel mid-generation. Escalating guarantees the
+        # process actually dies regardless of how the CLI handles SIGINT.
+        if not self.proc or self.proc.returncode is not None:
+            return
+        self._interrupting = True
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
             try:
-                self.proc.send_signal(signal.SIGINT)
+                self.proc.send_signal(sig)
             except ProcessLookupError:
                 self._interrupting = False
+                return
+            try:
+                await asyncio.wait_for(self.proc.wait(), timeout=1.0)
+                return
+            except asyncio.TimeoutError:
+                continue
 
     async def clear_context(self) -> None:
         """Wipe this thread's context: stop the CLI process, delete the jsonl
