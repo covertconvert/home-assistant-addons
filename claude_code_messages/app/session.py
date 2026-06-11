@@ -226,6 +226,17 @@ class Session:
         """Convert one CLI event into 0+ normalized frontend events."""
         kind = raw.get("type")
 
+        # Defensive: stop_reason can ride on multiple event shapes — top-level
+        # (`result`), nested in `message` (`assistant`), or inside `delta` for
+        # streaming `message_delta` events. Catch any terminal stop_reason
+        # regardless of carrier so the UI spinner doesn't get stranded.
+        sr = (
+            raw.get("stop_reason")
+            or (raw.get("message") or {}).get("stop_reason")
+            or (raw.get("delta") or {}).get("stop_reason")
+        )
+        terminal_sr = sr in ("end_turn", "stop_sequence", "max_tokens")
+
         if kind == "system":
             # init / config events — not useful to surface
             return []
@@ -266,7 +277,7 @@ class Session:
             # Without that, the UI's spinner runs forever. Synthesize an end on
             # any terminal stop_reason — a duplicate generation_ended (if the
             # CLI does later emit result) is harmless; a missing one isn't.
-            if msg.get("stop_reason") in ("end_turn", "stop_sequence", "max_tokens"):
+            if terminal_sr:
                 out.append({"type": "generation_ended", "subtype": "success"})
             return out
 
@@ -291,6 +302,13 @@ class Session:
                 "duration_ms": raw.get("duration_ms"),
             }]
 
+        # Unknown event kind. Log it once so we can spot new CLI event shapes
+        # (e.g. `message_delta`) and extend handling. Still synthesize end on a
+        # terminal stop_reason riding the unknown event.
+        import logging
+        logging.warning("ccm: unknown CLI event kind=%r keys=%s", kind, list(raw.keys())[:8])
+        if terminal_sr:
+            return [{"type": "generation_ended", "subtype": "success"}]
         return []
 
     async def _read_stderr(self) -> None:
