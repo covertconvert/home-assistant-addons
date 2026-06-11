@@ -686,9 +686,12 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
         # ends with the CLI crashing. Both Approve and Refine route through a
         # transparent kill-and-respawn:
         #
-        # - Approve: return approved=True, let the CLI run the tool and crash
-        #   naturally. _read_stdout sees _plan_handoff_pending and respawns in
-        #   default mode with "Proceed with the plan above".
+        # - Approve: return approved=True, flip session to default mode, then
+        #   schedule _approve_handoff. Older CLIs (< 2.1.170) crash on the
+        #   approved ExitPlanMode; newer ones emit a built-in "Exit plan mode?"
+        #   confirmation tool_result and wait for the user. _approve_handoff
+        #   covers both: if proc still alive, send a silent "Yes" to satisfy
+        #   the confirmation; if dead, respawn and send "Proceed".
         #
         # - Refine: arm _plan_refine_pending and kill the proc ourselves a
         #   moment after returning to the hook. Killing eagerly stops Claude
@@ -697,15 +700,43 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
         #   with an "ask me what to change" message.
         if decision in ("allow_once", "allow_domain"):
             sess.permission_mode = "default"
-            sess._plan_handoff_pending = True
             manager._persist()
             audit_log(body.session_id, "permission_mode_changed", {"mode": "default", "reason": "exit_plan_mode_approved"})
+            asyncio.create_task(_approve_handoff(sess))
             return {"approved": True}
         else:
             audit_log(body.session_id, "plan_refine_requested", {})
             asyncio.create_task(_refine_handoff(sess))
             return {"approved": False}
     return {"approved": decision in ("allow_once", "allow_domain")}
+
+
+async def _approve_handoff(sess) -> None:
+    """After ExitPlanMode is approved in plan mode, get Claude unstuck.
+
+    CLI v2.1.170+ emits a built-in "Exit plan mode?" tool_result (is_error=true)
+    on approval and waits for the user — without this, the user has to manually
+    type "Yes" to proceed. Older CLIs crash the process instead. We handle both:
+
+      proc alive  -> send silent "Yes" to confirm the built-in prompt
+      proc dead   -> respawn in default mode and send silent "Proceed"
+    """
+    await asyncio.sleep(0.15)  # let the hook get its HTTP response first
+    alive = sess.proc is not None and sess.proc.returncode is None
+    audit_log(sess.id, "approve_handoff_start", {"proc_alive": alive})
+    try:
+        if alive:
+            await sess.send_message("Yes", silent=True)
+            audit_log(sess.id, "approve_handoff_confirmed", {})
+        else:
+            sess._silent_shutdown = True
+            await sess.start()
+            await sess.send_message("Proceed with the plan above.", silent=True)
+            audit_log(sess.id, "approve_handoff_respawned", {"pid": sess.proc.pid if sess.proc else None})
+    except Exception as e:
+        audit_log(sess.id, "approve_handoff_failed", {"error": repr(e)})
+        await sess._emit({"type": "error", "message": f"Plan approve failed: {e}"})
+        await sess._emit({"type": "generation_ended", "subtype": "error"})
 
 
 async def _refine_handoff(sess) -> None:

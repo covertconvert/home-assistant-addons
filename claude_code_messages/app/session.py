@@ -116,7 +116,6 @@ class Session:
     _stderr_task: asyncio.Task | None = None
     _interrupting: bool = False
     _silent_shutdown: bool = False
-    _plan_handoff_pending: bool = False
     _plan_refine_pending: bool = False
 
     def subscribe(self) -> tuple[list[dict[str, Any]], asyncio.Queue[dict[str, Any]]]:
@@ -193,18 +192,7 @@ class Session:
             if not line:
                 rc = self.proc.returncode if self.proc else None
                 logging.warning("claude stdout closed (returncode=%s)", rc)
-                if self._plan_handoff_pending:
-                    # Plan-mode handoff. The CLI was started with
-                    # --permission-mode plan and crashes when ExitPlanMode is
-                    # approved (the flag is process-lifetime). v0.1.5 flipped
-                    # the session flag to "default" at approval time. Now
-                    # respawn under --resume in default mode and auto-inject a
-                    # "proceed" message so the user sees one continuous turn,
-                    # no "Session ended" banner, no need to type.
-                    self._plan_handoff_pending = False
-                    self.proc = None
-                    asyncio.create_task(self._continue_after_plan_handoff())
-                elif self._plan_refine_pending:
+                if self._plan_refine_pending:
                     # Plan-mode refine handoff. User tapped Refine; the server
                     # killed the proc immediately (so Claude doesn't generate
                     # an interim "ok proceeding…" before any natural crash).
@@ -349,17 +337,6 @@ class Session:
         payload = {"type": "user", "message": {"role": "user", "content": content}}
         self.proc.stdin.write((json.dumps(payload) + "\n").encode("utf-8"))
         await self.proc.stdin.drain()
-
-    async def _continue_after_plan_handoff(self) -> None:
-        """Respawn after a plan→default handoff and auto-send a proceed message."""
-        import logging
-        try:
-            await self.start()
-            await self.send_message("Proceed with the plan above.", silent=True)
-        except Exception as e:
-            logging.exception("plan handoff continuation failed")
-            await self._emit({"type": "error", "message": f"Plan handoff failed: {e}"})
-            await self._emit({"type": "generation_ended", "subtype": "error"})
 
     async def _continue_after_plan_refine(self) -> None:
         """Respawn after a refine-plan handoff and ask Claude to seek clarification."""
