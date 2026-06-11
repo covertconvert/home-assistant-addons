@@ -409,12 +409,16 @@ function appendPermissionCard(evt) {
     ? `<button class="approve-domain">Always Allow</button>`
     : '';
   const title = isPlan ? 'Plan ready — start coding?' : `Approve ${escapeHtml(evt.tool || 'action')}?`;
-  const approveLabel = isPlan ? 'Proceed' : 'Allow once';
-  const rejectLabel = isPlan ? 'Keep planning' : 'Reject';
+  const approveLabel = isPlan ? 'Approve & start coding' : 'Allow once';
+  const rejectLabel = isPlan ? 'Refine plan' : 'Reject';
+  const planNotice = isPlan
+    ? `<div class="plan-notice"><strong>Approve & start coding</strong> switches this chat out of plan mode and begins implementation. <strong>Refine plan</strong> stays in plan mode — Claude will ask what you'd like to change.</div>`
+    : '';
   card.innerHTML = `
     <div class="title">${title}</div>
     ${domainLine}
     <div class="body">${escapeHtml(evt.description || '')}</div>
+    ${planNotice}
     <div class="actions">
       <button class="approve">${approveLabel}</button>
       ${allowDomainBtn}

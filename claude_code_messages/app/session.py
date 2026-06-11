@@ -115,6 +115,7 @@ class Session:
     _reader_task: asyncio.Task | None = None
     _stderr_task: asyncio.Task | None = None
     _interrupting: bool = False
+    _plan_handoff_pending: bool = False
 
     def subscribe(self) -> tuple[list[dict[str, Any]], asyncio.Queue[dict[str, Any]]]:
         """Atomic (history snapshot, live queue) — no event is in both.
@@ -185,7 +186,18 @@ class Session:
             if not line:
                 rc = self.proc.returncode if self.proc else None
                 logging.warning("claude stdout closed (returncode=%s)", rc)
-                if self._interrupting:
+                if self._plan_handoff_pending:
+                    # Plan-mode handoff. The CLI was started with
+                    # --permission-mode plan and crashes when ExitPlanMode is
+                    # approved (the flag is process-lifetime). v0.1.5 flipped
+                    # the session flag to "default" at approval time. Now
+                    # respawn under --resume in default mode and auto-inject a
+                    # "proceed" message so the user sees one continuous turn,
+                    # no "Session ended" banner, no need to type.
+                    self._plan_handoff_pending = False
+                    self.proc = None
+                    asyncio.create_task(self._continue_after_plan_handoff())
+                elif self._interrupting:
                     # User-initiated stop. The subprocess will be respawned on
                     # the next message via ensure_started — keep the SSE stream
                     # alive so the UI doesn't show "Session ended".
@@ -307,6 +319,17 @@ class Session:
         payload = {"type": "user", "message": {"role": "user", "content": content}}
         self.proc.stdin.write((json.dumps(payload) + "\n").encode("utf-8"))
         await self.proc.stdin.drain()
+
+    async def _continue_after_plan_handoff(self) -> None:
+        """Respawn after a plan→default handoff and auto-send a proceed message."""
+        import logging
+        try:
+            await self.start()
+            await self.send_message("Proceed with the plan above.")
+        except Exception as e:
+            logging.exception("plan handoff continuation failed")
+            await self._emit({"type": "error", "message": f"Plan handoff failed: {e}"})
+            await self._emit({"type": "generation_ended", "subtype": "error"})
 
     async def respond_to_permission(self, approve: bool) -> None:
         # Permission flow is enforced by the PreToolUse hook (security.py).

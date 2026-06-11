@@ -159,10 +159,25 @@ def main() -> None:
     if tool_name == "exit_plan_mode" or tool_name == "ExitPlanMode":
         # Claude calls this when it's done planning and wants to start coding.
         # Always ask — the plan was already streamed as an assistant message,
-        # but this gives the user a chance to say "keep planning" before any
-        # files get written.
+        # so the user has it in front of them and can decide whether to start
+        # coding or refine the plan first.
         if not _ask_user(session_id, tool_name, tool_input):
-            _block("user kept planning", session_id, summary)
+            # User chose "Refine plan". The deny reason becomes the tool_result
+            # Claude sees, so phrase it as a directive: ask what to change
+            # rather than just acknowledging the rejection.
+            audit_log(session_id, "hook_block", {"reason": "plan_refine_requested", "payload": summary})
+            sys.stdout.write(json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": (
+                        "The user wants to refine the plan before implementation. "
+                        "Stay in plan mode. Ask them what they'd like to change, "
+                        "add, or remove, then propose a revised plan."
+                    ),
+                }
+            }))
+            sys.exit(0)
         _allow(session_id, summary)
         return
 

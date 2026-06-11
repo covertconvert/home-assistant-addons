@@ -682,13 +682,15 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
         and body.tool_name in ("ExitPlanMode", "exit_plan_mode")
         and sess.permission_mode == "plan"
     ):
-        # The CLI is locked to plan mode for its whole lifetime (it was started
-        # with --permission-mode plan). When the hook returns "allow" for
-        # ExitPlanMode the CLI crashes a few seconds later because it can't
-        # actually leave plan mode mid-process. Flip the session flag here so
-        # the next respawn (Resume button, or next message) drops the
-        # --permission-mode plan flag and the CLI continues cleanly.
+        # Plan-mode handoff. The CLI was started with --permission-mode plan as
+        # a process-lifetime flag and crashes a few seconds after ExitPlanMode
+        # is approved. Flip the stored mode to "default" so the next respawn
+        # drops the flag, and arm `_plan_handoff_pending` so when the crash
+        # propagates to _read_stdout we transparently respawn + auto-send a
+        # "Proceed with the plan above" message instead of showing
+        # "Session ended". The user sees one continuous turn.
         sess.permission_mode = "default"
+        sess._plan_handoff_pending = True
         manager._persist()
         audit_log(body.session_id, "permission_mode_changed", {"mode": "default", "reason": "exit_plan_mode_approved"})
     return {"approved": decision in ("allow_once", "allow_domain")}
