@@ -702,19 +702,34 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
             audit_log(body.session_id, "permission_mode_changed", {"mode": "default", "reason": "exit_plan_mode_approved"})
             return {"approved": True}
         else:
-            sess._plan_refine_pending = True
             audit_log(body.session_id, "plan_refine_requested", {})
-            asyncio.create_task(_force_refine_kill(sess))
+            asyncio.create_task(_refine_handoff(sess))
             return {"approved": False}
     return {"approved": decision in ("allow_once", "allow_domain")}
 
 
-async def _force_refine_kill(sess) -> None:
-    """Kill the plan-mode proc shortly after the hook response goes out, so
-    Claude doesn't generate a misleading interim message in the window between
-    the tool denial and the respawn."""
-    await asyncio.sleep(0.05)
-    await sess.stop()
+async def _refine_handoff(sess) -> None:
+    """Synchronously kill the plan-mode proc, respawn under --resume in plan
+    mode, and send a 'ask what to change' message. Audit-logged at each step
+    so we can diagnose failures."""
+    await asyncio.sleep(0.05)  # let the hook get its HTTP response first
+    audit_log(sess.id, "refine_handoff_start", {"proc_alive": sess.proc is not None and sess.proc.returncode is None})
+    sess._silent_shutdown = True  # the imminent stop() should emit nothing
+    try:
+        await sess.stop()
+        audit_log(sess.id, "refine_handoff_after_stop", {})
+        await sess.start()
+        audit_log(sess.id, "refine_handoff_after_start", {"pid": sess.proc.pid if sess.proc else None})
+        await sess.send_message(
+            "I'd like to refine the plan you just showed before any coding. "
+            "Ask me one specific question about which part of the plan to "
+            "change, add, or remove. Don't propose a new plan until I answer."
+        )
+        audit_log(sess.id, "refine_handoff_after_send", {})
+    except Exception as e:
+        audit_log(sess.id, "refine_handoff_failed", {"error": repr(e)})
+        await sess._emit({"type": "error", "message": f"Plan refine failed: {e}"})
+        await sess._emit({"type": "generation_ended", "subtype": "error"})
 
 
 @app.post("/api/sessions/{session_id}/upload")
