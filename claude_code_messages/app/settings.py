@@ -26,7 +26,75 @@ DEFAULTS: dict[str, Any] = {
     "ask_bash": True,
     "ask_webfetch": True,
     "webfetch_allowed_domains": [],
+    # Per-command auto-allow list for Bash. Each entry is the bare command
+    # name (e.g. "ls"). Auto-allow only fires when the Bash command starts
+    # with one of these AND contains no compositional metacharacters (see
+    # SHELL_METACHARS below). Off by default — opt-in per command.
+    "bash_auto_allow": [],
+    # HA companion-app notification on turn finish. Each entry is a full
+    # service name like "notify.mobile_app_jons_iphone". Only fires when
+    # the CCM tab is hidden at the moment `generation_ended` arrives.
+    "notify_devices": [],
 }
+
+
+# Bare commands the user can opt into auto-allowing. The keys are the only
+# tokens that can appear as the first word of an auto-allowed Bash command.
+# `description` is shown next to the checkbox in Settings. Read-only,
+# no network, no side effects, no privilege escalation.
+SAFE_BASH_COMMANDS: dict[str, str] = {
+    "ls": "List directory contents.",
+    "pwd": "Print the current working directory.",
+    "cat": "Print file contents to the terminal.",
+    "head": "Print the first lines of a file.",
+    "tail": "Print the last lines of a file.",
+    "wc": "Count lines, words, and bytes in a file.",
+    "file": "Identify a file's type.",
+    "stat": "Print a file's size, dates, and permissions.",
+    "du": "Print disk usage of a path.",
+    "df": "Print free disk space.",
+    "grep": "Search for a pattern inside files.",
+    "find": "Find files by name, size, or date.",
+    "which": "Look up where a command lives on PATH.",
+    "date": "Print the current date and time.",
+    "uname": "Print kernel / OS info.",
+    "whoami": "Print the current user name.",
+    "echo": "Print arguments back to stdout.",
+    "git status": "Show changed / untracked files.",
+    "git diff": "Show pending changes.",
+    "git log": "Show commit history.",
+    "git show": "Show a specific commit's contents.",
+    "git branch": "List branches.",
+}
+
+# Compositional / redirection metacharacters that would let a user-supplied
+# command escape the safe-prefix check. Presence of any of these → still ask.
+# Newline included so a multi-line command can't sneak past either.
+SHELL_METACHARS: tuple[str, ...] = (
+    ";", "&&", "||", "|", ">", "<", "`", "$(", "\n", "\r",
+)
+
+
+def is_safe_bash_command(command: str, allowed: list[str]) -> bool:
+    """True iff the Bash command starts with one of the user-enabled safe
+    commands AND contains no shell metacharacters that would let it do
+    more than the bare command. Strips leading whitespace; ignores
+    trailing arguments — they're either flags or paths."""
+    if not command or not allowed:
+        return False
+    if any(meta in command for meta in SHELL_METACHARS):
+        return False
+    s = command.strip()
+    # Tokenise loosely: split on whitespace, look at first 1-2 tokens.
+    parts = s.split()
+    if not parts:
+        return False
+    first = parts[0]
+    two = " ".join(parts[:2]) if len(parts) >= 2 else ""
+    for entry in allowed:
+        if entry in SAFE_BASH_COMMANDS and (first == entry or two == entry):
+            return True
+    return False
 
 
 def load() -> dict[str, Any]:
@@ -58,6 +126,9 @@ def public_view(d: dict[str, Any]) -> dict[str, Any]:
         "ask_bash": bool(d.get("ask_bash")),
         "ask_webfetch": bool(d.get("ask_webfetch")),
         "webfetch_allowed_domains": list(d.get("webfetch_allowed_domains") or []),
+        "bash_auto_allow": list(d.get("bash_auto_allow") or []),
+        "safe_bash_commands": SAFE_BASH_COMMANDS,
+        "notify_devices": list(d.get("notify_devices") or []),
     }
 
 

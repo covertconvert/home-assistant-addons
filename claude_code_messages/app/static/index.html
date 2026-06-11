@@ -152,6 +152,17 @@
           <div class="allowlist-head">Allowed domains</div>
           <ul id="webfetch-allowlist-items"></ul>
         </div>
+        <details class="safe-bash">
+          <summary>Auto-allow specific Bash commands</summary>
+          <p class="setting-help">
+            Tick the commands you trust Claude to run without asking. Only the
+            bare command counts — anything with a pipe (<code>|</code>),
+            redirect (<code>&gt;</code> <code>&lt;</code>), chain
+            (<code>&amp;&amp;</code> <code>;</code>), backtick, or
+            <code>$(...)</code> still pops up a prompt.
+          </p>
+          <ul id="safe-bash-list" class="safe-bash-list"></ul>
+        </details>
         <label class="toggle-row">
           <span>Home Assistant integration</span>
           <input type="checkbox" id="ha-mcp-enabled">
@@ -181,6 +192,17 @@
             <input type="password" id="ha-token" placeholder="Paste token to set or replace" autocomplete="off">
           </label>
           <p class="setting-help" id="ha-token-status"></p>
+          <details class="notify-devices">
+            <summary>Notify a device when a turn finishes</summary>
+            <p class="setting-help">
+              Picks from the <code>notify.mobile_app_*</code> services your HA
+              already knows about. Notifications only fire when the chat tab is
+              <em>in the background</em>; if you're looking at it, the reply
+              itself is the notification. Default: no devices.
+            </p>
+            <ul id="notify-devices-list" class="safe-bash-list"></ul>
+            <p id="notify-devices-status" class="setting-help" hidden></p>
+          </details>
         </div>
         <button id="settings-save" class="primary">Save settings</button>
         <p class="setting-status" id="settings-status" hidden></p>

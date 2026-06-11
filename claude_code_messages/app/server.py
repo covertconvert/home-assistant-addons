@@ -198,6 +198,11 @@ class SettingsBody(BaseModel):
     # Allows the client to clear the entire allowlist; per-domain adds happen
     # via the permission flow itself.
     webfetch_allowed_domains: list[str] | None = None
+    # Per-command Bash auto-allow opt-ins. Each entry must appear in
+    # settings.SAFE_BASH_COMMANDS; unknown entries are silently dropped.
+    bash_auto_allow: list[str] | None = None
+    # Full HA notify.* service names (e.g. notify.mobile_app_jons_iphone).
+    notify_devices: list[str] | None = None
 
 
 @app.get("/api/settings")
@@ -221,6 +226,14 @@ async def update_settings(body: SettingsBody) -> dict[str, Any]:
         new["webfetch_allowed_domains"] = [
             h.lower().strip() for h in body.webfetch_allowed_domains if h and h.strip()
         ]
+    if body.bash_auto_allow is not None:
+        from settings import SAFE_BASH_COMMANDS as _SAFE
+        new["bash_auto_allow"] = [c for c in body.bash_auto_allow if c in _SAFE]
+    if body.notify_devices is not None:
+        new["notify_devices"] = [
+            s.strip() for s in body.notify_devices
+            if isinstance(s, str) and s.strip().startswith("notify.")
+        ]
     save_settings(new)
     audit_log("settings", "settings_updated", {
         "ha_mcp_enabled": new["ha_mcp_enabled"],
@@ -229,8 +242,108 @@ async def update_settings(body: SettingsBody) -> dict[str, Any]:
         "ask_bash": new["ask_bash"],
         "ask_webfetch": new["ask_webfetch"],
         "webfetch_allowed_count": len(new.get("webfetch_allowed_domains") or []),
+        "bash_auto_allow": list(new.get("bash_auto_allow") or []),
+        "notify_devices_count": len(new.get("notify_devices") or []),
     })
     return settings_public_view(new)
+
+
+def _ha_request(url: str, token: str, *, method: str = "GET",
+                body: dict | None = None, timeout: float = 8.0) -> Any:
+    """Synchronous HA REST call. Caller wraps in asyncio.to_thread.
+
+    Uses urllib so we don't pull in a third-party HTTP client just for this.
+    Returns parsed JSON on 2xx, raises on anything else."""
+    import json as _json
+    import urllib.request
+    import urllib.error
+    payload = _json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(
+        url.rstrip("/"),
+        data=payload,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read()
+        if not raw:
+            return None
+        try:
+            return _json.loads(raw.decode("utf-8"))
+        except ValueError:
+            return raw.decode("utf-8", errors="replace")
+
+
+@app.get("/api/ha/notify_targets")
+async def list_notify_targets() -> list[dict[str, str]]:
+    """List every notify.mobile_app_* service the configured HA knows about.
+    Reuses the HA URL + token saved for the MCP integration. Returns
+    [] (not an error) if HA isn't configured yet."""
+    s = load_settings()
+    url, token = (s.get("ha_url") or "").strip(), (s.get("ha_token") or "").strip()
+    if not url or not token:
+        return []
+    try:
+        services = await asyncio.to_thread(
+            _ha_request, f"{url}/api/services", token,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"HA lookup failed: {e}") from e
+    out: list[dict[str, str]] = []
+    if isinstance(services, list):
+        for entry in services:
+            if not isinstance(entry, dict) or entry.get("domain") != "notify":
+                continue
+            for svc_name in (entry.get("services") or {}).keys():
+                if isinstance(svc_name, str) and svc_name.startswith("mobile_app_"):
+                    # Pretty label from mobile_app_jons_iphone → "Jons Iphone"
+                    pretty = svc_name[len("mobile_app_"):].replace("_", " ").title()
+                    out.append({"service": f"notify.{svc_name}", "label": pretty})
+    out.sort(key=lambda x: x["label"])
+    return out
+
+
+class TurnFinishedBody(BaseModel):
+    session_id: str
+    title: str | None = None
+
+
+@app.post("/api/notify/turn_finished")
+async def notify_turn_finished(body: TurnFinishedBody) -> dict[str, Any]:
+    """Frontend calls this on `generation_ended` when document.hidden is true.
+    Dispatches a push to every configured notify.mobile_app_* device via HA."""
+    s = load_settings()
+    devices = list(s.get("notify_devices") or [])
+    url, token = (s.get("ha_url") or "").strip(), (s.get("ha_token") or "").strip()
+    if not devices or not url or not token:
+        return {"sent": 0, "skipped": True}
+    sess = manager.get(body.session_id)
+    title = (body.title or (sess.title if sess else "Claude")).strip()
+    payload_message = "Claude finished a turn — tap to open."
+    sent, failures = 0, []
+    for dev in devices:
+        if not isinstance(dev, str) or not dev.startswith("notify."):
+            continue
+        svc = dev[len("notify."):]
+        try:
+            await asyncio.to_thread(
+                _ha_request,
+                f"{url}/api/services/notify/{svc}",
+                token,
+                method="POST",
+                body={"title": title, "message": payload_message},
+            )
+            sent += 1
+        except Exception as e:
+            failures.append({"device": dev, "error": str(e)})
+    audit_log(body.session_id, "notify_turn_finished", {
+        "sent": sent, "devices": len(devices), "failures": len(failures),
+    })
+    return {"sent": sent, "failures": failures}
 
 
 @app.delete("/api/data/all")
@@ -763,6 +876,22 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
             "reason": "bash_trust_turn",
         })
         return {"approved": True}
+
+    # Per-command Bash auto-allow: the user has opted in to commands like
+    # `ls`/`grep`/etc. that have no side effects and no network. Short-circuit
+    # before locking + emitting a card, so a fast 4-command sequence doesn't
+    # serialise needlessly.
+    if body.tool_name == "Bash":
+        from settings import is_safe_bash_command
+        cmd = body.tool_input.get("command", "") if isinstance(body.tool_input, dict) else ""
+        allowed = list(load_settings().get("bash_auto_allow") or [])
+        if isinstance(cmd, str) and is_safe_bash_command(cmd, allowed):
+            audit_log(body.session_id, "permission_auto_allowed", {
+                "tool": body.tool_name,
+                "reason": "bash_safe_command",
+                "command": cmd[:120],
+            })
+            return {"approved": True}
 
     lock = session_permission_locks.setdefault(body.session_id, asyncio.Lock())
     async with lock:

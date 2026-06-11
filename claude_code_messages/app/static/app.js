@@ -42,6 +42,28 @@ function persistCollapsedProjects() {
   localStorage.setItem('collapsedProjects', JSON.stringify([...state.collapsedProjects]));
 }
 
+// --- Turn-finished push notification -------------------------------------
+// Only fires when the document is hidden when generation ends. If the user
+// is staring at the chat, the screen update is the notification.
+
+async function maybeNotifyTurnFinished() {
+  if (!document.hidden) return;
+  if (!state.sessionId) return;
+  try {
+    const sess = state.sessions.find(s => s.id === state.sessionId);
+    await api('api/notify/turn_finished', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: state.sessionId,
+        title: sess ? sess.title : null,
+      }),
+    });
+  } catch (err) {
+    // Silent fail — no toast for a missed push, just a console line.
+    console.warn('notify/turn_finished failed:', err.message);
+  }
+}
+
 // --- Theme ---------------------------------------------------------------
 // Set as early as possible so the page never flashes the wrong colours.
 function applyTheme(theme) {
@@ -239,6 +261,7 @@ function handleEvent(evt) {
       break;
     case 'generation_ended':
       setGenerating(false);
+      maybeNotifyTurnFinished();
       if (evt.subtype === 'interrupted') appendSystem('Stopped');
       break;
     case 'system_message':
@@ -899,6 +922,84 @@ const settingsEls = {
 // In-memory copy of the persisted allowlist while the settings modal is open.
 // Edits (removals) only commit when the user hits Save.
 let webfetchDomains = [];
+let safeBashEnabled = [];   // command keys currently ticked
+let safeBashCatalog = {};   // {command: description} from the server
+let notifyDevices = [];     // selected notify.mobile_app_* service names
+
+function renderSafeBashList() {
+  const ul = document.getElementById('safe-bash-list');
+  if (!ul) return;
+  ul.innerHTML = '';
+  const cmds = Object.keys(safeBashCatalog).sort();
+  for (const cmd of cmds) {
+    const li = document.createElement('li');
+    const id = `safe-bash-${cmd.replace(/\s+/g, '_')}`;
+    li.innerHTML = `
+      <label for="${id}">
+        <input type="checkbox" id="${id}" data-cmd="${cmd}">
+        <span class="safe-bash-cmd"><code>${escapeHtml(cmd)}</code></span>
+        <span class="safe-bash-desc">${escapeHtml(safeBashCatalog[cmd] || '')}</span>
+      </label>
+    `;
+    const cb = li.querySelector('input');
+    cb.checked = safeBashEnabled.includes(cmd);
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        if (!safeBashEnabled.includes(cmd)) safeBashEnabled.push(cmd);
+      } else {
+        safeBashEnabled = safeBashEnabled.filter(c => c !== cmd);
+      }
+    });
+    ul.appendChild(li);
+  }
+}
+
+async function renderNotifyDevices() {
+  const ul = document.getElementById('notify-devices-list');
+  const status = document.getElementById('notify-devices-status');
+  if (!ul) return;
+  ul.innerHTML = '';
+  status.hidden = true;
+  if (!settingsEls.enabled.checked) {
+    status.hidden = false;
+    status.textContent = 'Enable Home Assistant integration above to pick devices.';
+    return;
+  }
+  let targets;
+  try {
+    targets = await api('api/ha/notify_targets');
+  } catch (err) {
+    status.hidden = false;
+    status.textContent = `Couldn't reach Home Assistant: ${err.message}`;
+    return;
+  }
+  if (!targets.length) {
+    status.hidden = false;
+    status.textContent = 'No mobile_app notify services found. Install the HA companion app and link your phone first.';
+    return;
+  }
+  for (const t of targets) {
+    const li = document.createElement('li');
+    const id = `notify-${t.service.replace(/\W+/g, '_')}`;
+    li.innerHTML = `
+      <label for="${id}">
+        <input type="checkbox" id="${id}" data-service="${escapeHtml(t.service)}">
+        <span class="safe-bash-cmd"><code>${escapeHtml(t.label)}</code></span>
+        <span class="safe-bash-desc">${escapeHtml(t.service)}</span>
+      </label>
+    `;
+    const cb = li.querySelector('input');
+    cb.checked = notifyDevices.includes(t.service);
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        if (!notifyDevices.includes(t.service)) notifyDevices.push(t.service);
+      } else {
+        notifyDevices = notifyDevices.filter(s => s !== t.service);
+      }
+    });
+    ul.appendChild(li);
+  }
+}
 
 function renderAllowlist() {
   settingsEls.allowlistItems.innerHTML = '';
@@ -985,6 +1086,7 @@ async function onToggleChange() {
     }
   }
   syncHaFieldsVisibility();
+  renderNotifyDevices();
 }
 
 async function openSettings() {
@@ -995,6 +1097,11 @@ async function openSettings() {
     settingsEls.askWebfetch.checked = !!s.ask_webfetch;
     webfetchDomains = (s.webfetch_allowed_domains || []).slice();
     renderAllowlist();
+    safeBashCatalog = s.safe_bash_commands || {};
+    safeBashEnabled = (s.bash_auto_allow || []).slice();
+    renderSafeBashList();
+    notifyDevices = (s.notify_devices || []).slice();
+    renderNotifyDevices();
     settingsEls.enabled.checked = !!s.ha_mcp_enabled;
     settingsEls.url.value = s.ha_url || '';
     settingsEls.token.value = '';
@@ -1024,6 +1131,8 @@ async function saveSettings() {
         ask_bash: settingsEls.askBash.checked,
         ask_webfetch: settingsEls.askWebfetch.checked,
         webfetch_allowed_domains: webfetchDomains,
+        bash_auto_allow: safeBashEnabled,
+        notify_devices: notifyDevices,
       }),
     });
     settingsEls.status.hidden = false;
