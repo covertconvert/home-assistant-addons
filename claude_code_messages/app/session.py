@@ -395,11 +395,18 @@ class SessionManager:
             for s in self.sessions.values()
         ])
 
-    async def create(self, title: str | None = None, project_id: str | None = None) -> Session:
+    async def create(self, title: str | None = None, project_id: str | None = None,
+                     model: str | None = None, permission_mode: str = "default") -> Session:
         if len(self.sessions) >= self.max_sessions:
             oldest = min(self.sessions.values(), key=lambda s: s.last_activity)
             await self.delete(oldest.id)
-        sess = Session(id=str(uuid.uuid4()), title=title or "New chat", project_id=project_id)
+        sess = Session(
+            id=str(uuid.uuid4()),
+            title=title or "New chat",
+            project_id=project_id,
+            model=model,
+            permission_mode=permission_mode,
+        )
         await sess.start()
         self.sessions[sess.id] = sess
         self._persist()

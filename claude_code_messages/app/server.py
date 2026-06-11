@@ -491,7 +491,12 @@ async def summarize_fresh(session_id: str) -> dict[str, Any]:
     if not summary:
         raise HTTPException(status_code=502, detail="Summarize returned no text")
 
-    new = await manager.create(title=f"{src.title} (continued)", project_id=src.project_id)
+    new = await manager.create(
+        title=f"{src.title} (continued)",
+        project_id=src.project_id,
+        model=src.model,
+        permission_mode=src.permission_mode,
+    )
     seed = (
         "Picking up from a previous chat. Here is the summary of where we left off; "
         "use it as context and acknowledge briefly, then wait for the next instruction.\n\n"
