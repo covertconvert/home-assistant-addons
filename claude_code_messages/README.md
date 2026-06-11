@@ -95,6 +95,17 @@ Hard rules can't be bypassed even by an in-app approval. See [SECURITY.md](SECUR
 
 Inspired by [Claude Terminal for Home Assistant](https://github.com/heytcass/home-assistant-addons) by heytcass. This is a from-scratch implementation, not a fork — it uses an SSE-based chat protocol instead of xterm.js to give a better mobile UX.
 
+## Acknowledgements
+
+This add-on is the chat UI, session plumbing, permission system, and HA glue — all written from scratch. The heavy lifting on a few external pieces is done by:
+
+- **[Claude Code CLI](https://github.com/anthropics/claude-code)** by Anthropic — the agent itself. CCM spawns and wraps `claude` in stream-json mode.
+- **[ha-mcp](https://github.com/homeassistant-ai/ha-mcp)** by Julien ([@julienld](https://github.com/julienld)) and the homeassistant-ai contributors — the Model Context Protocol server that lets Claude read entity states, call services, and edit HA config when you enable the Home Assistant integration. Launched on demand via `uvx ha-mcp`. MIT-licensed.
+- **[FastAPI](https://github.com/fastapi/fastapi)** + **[sse-starlette](https://github.com/sysid/sse-starlette)** — the backend server and the SSE streaming layer.
+- **[uv / uvx](https://github.com/astral-sh/uv)** by Astral — used to fetch and run `ha-mcp` without polluting the addon image.
+
+All listed projects are independent of CCM and carry their own licenses.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
