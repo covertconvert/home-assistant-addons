@@ -321,7 +321,7 @@ class Session:
                 "text": text,
                 "attachments": attachments,
             })
-        await self._emit({"type": "generation_started"})
+        await self._emit({"type": "generation_started", "started_at": int(time.time() * 1000)})
 
         # Auto-title from first user message — only for real user turns.
         if not silent and self.title == "New chat" and text:

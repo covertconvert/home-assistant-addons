@@ -218,7 +218,7 @@ function handleEvent(evt) {
       appendPermissionCard(evt);
       break;
     case 'generation_started':
-      setGenerating(true);
+      setGenerating(true, evt.started_at);
       break;
     case 'usage':
       addUsageTokens(evt);
@@ -470,13 +470,16 @@ function appendResumePrompt() {
   els.thread.appendChild(wrap);
 }
 
-function setGenerating(on) {
+function setGenerating(on, startedAt) {
   state.generating = on;
   els.send.hidden = on;
   els.stop.hidden = !on;
   const indicator = document.getElementById('typing-indicator');
   if (on) {
-    state.turnStartedAt = Date.now();
+    // Prefer the server's timestamp so reconnecting (HA re-mounting the panel,
+    // companion app foreground/background) shows the true elapsed seconds
+    // instead of resetting to 0s. Falls back to client clock if absent.
+    state.turnStartedAt = startedAt || Date.now();
     state.turnTokens = 0;
     indicator.hidden = false;
     updateTypingCaption();
