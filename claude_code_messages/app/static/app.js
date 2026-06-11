@@ -968,7 +968,7 @@ els.newProject.addEventListener('click', createProject);
 function renderModeToggle(mode) {
   const el = els.modeStatus;
   el.dataset.mode = mode;
-  el.textContent = mode === 'plan' ? 'Plan mode' : 'Normal mode';
+  el.textContent = mode === 'plan' ? 'Plan' : 'Normal';
 }
 
 els.modeStatus.addEventListener('click', () => {
@@ -1662,8 +1662,17 @@ function trackVisualViewport() {
   const vv = window.visualViewport;
   if (!vv) return;
   const app = document.getElementById('app');
+  // Track the largest viewport we've seen — the keyboard-closed baseline.
+  // Comparing against window.innerHeight is unreliable inside HA's ingress
+  // iframe because the iframe doesn't always reflect parent resizes.
+  let baseline = vv.height;
   const apply = () => {
+    if (vv.height > baseline) baseline = vv.height;
     app.style.height = vv.height + 'px';
+    // > 120px shrink => keyboard. Toggles the --safe-bottom override so the
+    // home-indicator inset stops adding dead space below the composer.
+    const keyboardOpen = baseline - vv.height > 120;
+    document.documentElement.dataset.keyboardOpen = keyboardOpen ? '1' : '0';
     // iOS scrolls the iframe up to reveal a focused input even when our
     // layout already accommodates the keyboard. Force-pin to top.
     window.scrollTo(0, 0);

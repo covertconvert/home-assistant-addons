@@ -85,14 +85,14 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
 #topbar h1 { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; margin: 0; text-align: left; line-height: 1.25; overflow-wrap: anywhere; }
 #topbar button { font-size: 22px; line-height: 1; min-width: 36px; min-height: 36px; }
 .mode-status {
-  font-size: 11px; font-weight: 500; color: var(--text-dim);
-  text-align: center; letter-spacing: 0.02em;
-  margin: 6px auto 0; padding: 4px 12px;
+  font-size: 12px; font-weight: 500; color: var(--text-dim);
+  letter-spacing: 0.02em; line-height: 1;
+  padding: 0 10px; height: 28px;
   border: 1px solid var(--border); border-radius: 999px;
   background: var(--panel-2);
   cursor: pointer; user-select: none;
   -webkit-tap-highlight-color: transparent;
-  display: inline-flex; align-items: center; align-self: center;
+  display: inline-flex; align-items: center; flex: 0 0 auto;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .mode-status:active { background: var(--border); }
@@ -387,7 +387,7 @@ button.danger:active { background: color-mix(in srgb, var(--danger) 20%, transpa
   position: sticky; bottom: 0;
 }
 .composer-row { display: flex; align-items: flex-end; gap: 8px; }
-#composer button { min-width: 40px; min-height: 40px; border-radius: 50%; background: var(--panel-2); font-size: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-dim); }
+#composer button:not(.mode-status) { min-width: 40px; min-height: 40px; border-radius: 50%; background: var(--panel-2); font-size: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-dim); }
 #composer button svg { display: block; }
 #send { background: var(--accent); color: white; }
 #stop { background: var(--danger); color: white; }
