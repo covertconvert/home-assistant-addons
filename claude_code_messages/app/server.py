@@ -322,8 +322,15 @@ async def notify_turn_finished(body: TurnFinishedBody) -> dict[str, Any]:
     if not devices or not url or not token:
         return {"sent": 0, "skipped": True}
     sess = manager.get(body.session_id)
-    title = (body.title or (sess.title if sess else "Claude")).strip()
-    payload_message = "Claude finished a turn — tap to open."
+    chat_title = (body.title or (sess.title if sess else "")).strip()
+    # The CLI's default for an unstarted session is "New chat", which is
+    # useless as a notification body. Treat it as "no title".
+    if chat_title.lower() in ("", "new chat", "untitled"):
+        chat_title = ""
+    notification_title = "Claude Code Messages"
+    notification_body = (
+        f"Reply ready in {chat_title}" if chat_title else "Your reply is ready"
+    )
     sent, failures = 0, []
     for dev in devices:
         if not isinstance(dev, str) or not dev.startswith("notify."):
@@ -335,7 +342,7 @@ async def notify_turn_finished(body: TurnFinishedBody) -> dict[str, Any]:
                 f"{url}/api/services/notify/{svc}",
                 token,
                 method="POST",
-                body={"title": title, "message": payload_message},
+                body={"title": notification_title, "message": notification_body},
             )
             sent += 1
         except Exception as e:
