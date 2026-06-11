@@ -36,6 +36,20 @@ from settings import load as load_settings  # noqa: E402
 
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 
+# MCP tools the CLI may call. Read-only ones auto-allow so common things like
+# "look up an entity state" don't force a permission card on every step. Any
+# tool not matching these prefixes (control, config-write, backup, service
+# calls, etc.) routes through _ask_user — the user sees what's about to happen
+# and approves it explicitly.
+MCP_READONLY_PREFIXES = (
+    "mcp__home-assistant__ha_search_",
+    "mcp__home-assistant__ha_get_",
+    "mcp__home-assistant__ha_deep_search",
+    "mcp__home-assistant__ha_eval_template",
+    "mcp__home-assistant__ha_config_list_",
+    "mcp__home-assistant__ha_config_get_",
+)
+
 SESSION_ID_KEY = "session_id"
 
 # Server runs inside the same container; the addon binds to 8099 by default.
@@ -181,6 +195,19 @@ def main() -> None:
                 }
             }))
             sys.exit(0)
+        _allow(session_id, summary)
+        return
+
+    if tool_name.startswith("mcp__"):
+        # MCP tools weren't in the matcher before v0.1.15, so the CLI fell back
+        # to its own permission flow with no UI surface in CCM — Claude would
+        # request the tool and silently wait. Now: read-only HA queries pass
+        # straight through, anything else asks the user.
+        if any(tool_name.startswith(p) for p in MCP_READONLY_PREFIXES):
+            _allow(session_id, summary)
+            return
+        if not _ask_user(session_id, tool_name, tool_input):
+            _block(f"user rejected mcp tool: {tool_name}", session_id, summary)
         _allow(session_id, summary)
         return
 
