@@ -785,6 +785,11 @@ function renderModeToggle(mode) {
   el.textContent = mode === 'plan' ? 'Plan mode' : 'Normal mode';
 }
 
+els.modeStatus.addEventListener('click', () => {
+  const cur = els.modeStatus.dataset.mode || 'default';
+  setPermissionMode(cur === 'plan' ? 'default' : 'plan');
+});
+
 async function setPermissionMode(next) {
   if (!state.sessionId) return;
   const cur = els.modeStatus.dataset.mode || 'default';
