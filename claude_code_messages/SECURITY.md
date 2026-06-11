@@ -2,7 +2,7 @@
 
 The app enforces a layered defense: hard rules (code-enforced, can't be bypassed), user-controllable prompts (you decide per-action), and soft rules (guide Claude's behaviour but not enforced).
 
-**Last reviewed: 2026-06-10 (v0.1.0)**
+**Last reviewed: 2026-06-11 (v0.1.3)**
 
 ---
 
@@ -15,7 +15,7 @@ These fire from the `PreToolUse` hook before any tool runs. They cannot be disab
 These never get read into Claude's context, never get edited, never get deleted. The hook returns "deny" if Claude tries.
 
 - `/config/secrets.yaml`
-- `/config/claude-config/` (the app's own OAuth dir — Claude can't see its own creds)
+- `**/.claude.json` (the Claude CLI's auth file — Claude can't see its own creds)
 - Anything matching `**/.storage/auth*`
 - Anything matching `**/.storage/onboarding*`
 - Anything matching `**/*token*`, `**/*password*`, `**/*credential*`, `**/.env*`
@@ -87,7 +87,7 @@ These guide Claude's behaviour; they're not enforced by code. Trust them to the 
 
 ## Privacy
 
-- OAuth credentials live in `/config/claude-config/` only. They're in the **Forbidden** list above, so the tool layer can never read them.
+- OAuth credentials live in the Claude CLI's `.claude.json`. It's in the **Forbidden** list above, so the tool layer can never read it. The rest of `/config/claude-config/` (plans, conversation history) is writable so Claude can manage its own working files there.
 - The app does not collect telemetry, usage stats, or crash reports.
 - You can revoke OAuth from your Anthropic dashboard at any time; the app respects revocation on the next request.
 - The audit log records the *arguments* passed to tools (file paths, command strings, URL hosts). It does **not** record file contents read by Claude or assistant message text.

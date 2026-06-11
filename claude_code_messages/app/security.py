@@ -12,7 +12,6 @@ from pathlib import Path
 
 FORBIDDEN_PATHS: tuple[str, ...] = (
     "/config/secrets.yaml",
-    "/config/claude-config",
 )
 
 FORBIDDEN_GLOBS: tuple[str, ...] = (
@@ -22,6 +21,10 @@ FORBIDDEN_GLOBS: tuple[str, ...] = (
     "**/*password*",
     "**/*credential*",
     "**/.env*",
+    # Claude CLI's combined settings + OAuth file. The token/credential globs
+    # above don't catch it by name, so name it explicitly. Everything else
+    # under /config/claude-config (plans, transcripts, etc.) stays writable.
+    "**/.claude.json",
 )
 
 # Read is allowed; write/edit is blocked. Use for things Claude should be

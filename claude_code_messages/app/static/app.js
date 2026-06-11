@@ -401,20 +401,24 @@ function appendPermissionCard(evt) {
   card.className = 'permission';
   card.id = `perm-${evt.id}`;
   const domain = evt.domain || '';
+  const isPlan = evt.tool === 'exit_plan_mode' || evt.tool === 'ExitPlanMode';
   const domainLine = domain
     ? `<div class="domain-line">Domain: <strong>${escapeHtml(domain)}</strong></div>`
     : '';
   const allowDomainBtn = domain
     ? `<button class="approve-domain">Always Allow</button>`
     : '';
+  const title = isPlan ? 'Plan ready — start coding?' : `Approve ${escapeHtml(evt.tool || 'action')}?`;
+  const approveLabel = isPlan ? 'Proceed' : 'Allow once';
+  const rejectLabel = isPlan ? 'Keep planning' : 'Reject';
   card.innerHTML = `
-    <div class="title">Approve ${escapeHtml(evt.tool || 'action')}?</div>
+    <div class="title">${title}</div>
     ${domainLine}
     <div class="body">${escapeHtml(evt.description || '')}</div>
     <div class="actions">
-      <button class="approve">Allow once</button>
+      <button class="approve">${approveLabel}</button>
       ${allowDomainBtn}
-      <button class="reject">Reject</button>
+      <button class="reject">${rejectLabel}</button>
     </div>
   `;
   const reqId = evt.id;

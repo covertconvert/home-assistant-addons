@@ -644,7 +644,10 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
                     url = v
                     break
         host = _host_from_url(url)
-        description = cmd or url or _json.dumps(body.tool_input)[:240]
+        plan = ""
+        if body.tool_name in ("exit_plan_mode", "ExitPlanMode"):
+            plan = body.tool_input.get("plan", "") if isinstance(body.tool_input, dict) else ""
+        description = plan or cmd or url or _json.dumps(body.tool_input)[:240]
         evt = {
             "type": "permission_request",
             "id": request_id,

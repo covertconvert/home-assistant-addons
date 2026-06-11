@@ -195,7 +195,7 @@
           <li><code>/config/secrets.yaml</code></li>
           <li>Home Assistant auth and onboarding storage (<code>.storage/auth*</code>, <code>.storage/onboarding*</code>)</li>
           <li>Anything matching <code>*token*</code>, <code>*password*</code>, <code>*credential*</code>, <code>.env*</code></li>
-          <li>The app's own OAuth folder — Claude can't see its own credentials</li>
+          <li>The Claude CLI's auth file (<code>.claude.json</code>) — Claude can't see its own credentials</li>
         </ul>
 
         <h4 class="policy-heading">Files auto-backed-up before edit</h4>

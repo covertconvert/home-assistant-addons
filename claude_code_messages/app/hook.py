@@ -156,6 +156,16 @@ def main() -> None:
         _allow(session_id, summary)
         return
 
+    if tool_name == "exit_plan_mode" or tool_name == "ExitPlanMode":
+        # Claude calls this when it's done planning and wants to start coding.
+        # Always ask — the plan was already streamed as an assistant message,
+        # but this gives the user a chance to say "keep planning" before any
+        # files get written.
+        if not _ask_user(session_id, tool_name, tool_input):
+            _block("user kept planning", session_id, summary)
+        _allow(session_id, summary)
+        return
+
     if tool_name == "WebFetch":
         url = ""
         for k in ("url", "URL", "uri", "href"):
