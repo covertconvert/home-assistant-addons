@@ -1342,6 +1342,15 @@ settingsEls.theme.addEventListener('change', () => {
   applyTheme(settingsEls.theme.value);
 });
 
+document.getElementById('safe-bash-all').addEventListener('click', () => {
+  safeBashEnabled = Object.keys(safeBashCatalog);
+  renderSafeBashList();
+});
+document.getElementById('safe-bash-none').addEventListener('click', () => {
+  safeBashEnabled = [];
+  renderSafeBashList();
+});
+
 document.getElementById('delete-all-data').addEventListener('click', async () => {
   const ok = await confirmDangerous({
     title: 'Delete everything?',

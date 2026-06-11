@@ -302,6 +302,13 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
 
 .safe-bash { margin-top: 12px; }
 .safe-bash summary { cursor: pointer; font-size: 14px; font-weight: 500; padding: 6px 0; }
+.bulk-toggle { display: flex; gap: 8px; margin: 6px 0 0; }
+.bulk-toggle button {
+  font-size: 12px; padding: 4px 10px; border-radius: 6px;
+  background: var(--panel-2); color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.bulk-toggle button:active { background: var(--border); color: var(--text); }
 .safe-bash-list { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
 .safe-bash-list li { padding: 0; }
 .safe-bash-list label {
