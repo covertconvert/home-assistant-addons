@@ -104,7 +104,7 @@ This add-on is the chat UI, session plumbing, permission system, and HA glue —
 - **[FastAPI](https://github.com/fastapi/fastapi)** + **[sse-starlette](https://github.com/sysid/sse-starlette)** — the backend server and the SSE streaming layer.
 - **[uv / uvx](https://github.com/astral-sh/uv)** by Astral — used to fetch and run `ha-mcp` without polluting the addon image.
 
-All listed projects are independent of CCM and carry their own licenses.
+All listed projects are independent of CCM and carry their own licenses. Full per-dependency license breakdown is in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 ## License
 
