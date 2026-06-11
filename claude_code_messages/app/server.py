@@ -612,6 +612,117 @@ def _host_from_url(url: str) -> str:
         return ""
 
 
+def _mcp_card_text(tool_name: str, tool_input: dict) -> tuple[str, str]:
+    """Human-readable (title, body) for an MCP tool permission card.
+
+    Falls back to the raw tool name + truncated JSON for shapes we don't
+    recognise — better than nothing, and keeps the original info visible.
+    """
+    raw_json = ""
+    try:
+        import json as _json
+        raw_json = _json.dumps(tool_input, ensure_ascii=False)[:240]
+    except (TypeError, ValueError):
+        raw_json = str(tool_input)[:240]
+
+    # Strip the mcp__<server>__ prefix for the fallback title.
+    short = tool_name.split("__")[-1] if tool_name.startswith("mcp__") else tool_name
+
+    if tool_name == "mcp__home-assistant__ha_call_service":
+        domain = (tool_input.get("domain") or "").strip()
+        service = (tool_input.get("service") or "").strip()
+        target = tool_input.get("target") or {}
+        entity = target.get("entity_id") if isinstance(target, dict) else None
+        area = target.get("area_id") if isinstance(target, dict) else None
+        data = tool_input.get("service_data") or tool_input.get("data") or {}
+
+        # Common reload services get plain-English titles.
+        reload_titles = {
+            ("automation", "reload"): "Reload automations",
+            ("script", "reload"): "Reload scripts",
+            ("scene", "reload"): "Reload scenes",
+            ("rest_command", "reload"): "Reload REST commands",
+            ("template", "reload"): "Reload template entities",
+            ("input_boolean", "reload"): "Reload input booleans",
+            ("input_number", "reload"): "Reload input numbers",
+            ("input_select", "reload"): "Reload input selects",
+            ("input_text", "reload"): "Reload input text",
+            ("input_datetime", "reload"): "Reload input datetimes",
+            ("homeassistant", "reload_all"): "Reload all YAML configs",
+            ("homeassistant", "restart"): "Restart Home Assistant",
+            ("homeassistant", "check_config"): "Check HA config",
+        }
+        if (domain, service) in reload_titles:
+            return reload_titles[(domain, service)], f"{domain}.{service}"
+
+        target_str = ""
+        if isinstance(entity, str):
+            target_str = entity
+        elif isinstance(entity, list) and entity:
+            target_str = ", ".join(entity[:3]) + (f" +{len(entity)-3}" if len(entity) > 3 else "")
+        elif isinstance(area, str):
+            target_str = f"area {area}"
+
+        if domain and service:
+            title = f"{domain}.{service}"
+            if target_str:
+                title += f" → {target_str}"
+            body = raw_json if data else (f"target: {target_str}" if target_str else "")
+            return title, body
+
+    if tool_name == "mcp__home-assistant__ha_config_set_automation":
+        cfg = tool_input.get("config") or {}
+        alias = cfg.get("alias") if isinstance(cfg, dict) else None
+        aid = tool_input.get("automation_id") or (cfg.get("id") if isinstance(cfg, dict) else None)
+        if alias:
+            return (f"Save automation: {alias}", f"id: {aid or '(new)'}")
+        return ("Save automation", raw_json)
+
+    if tool_name == "mcp__home-assistant__ha_config_remove_automation":
+        aid = tool_input.get("automation_id") or ""
+        return (f"Delete automation {aid}".strip(), raw_json)
+
+    if tool_name == "mcp__home-assistant__ha_config_set_script":
+        cfg = tool_input.get("config") or {}
+        alias = cfg.get("alias") if isinstance(cfg, dict) else None
+        sid = tool_input.get("script_id") or ""
+        if alias:
+            return (f"Save script: {alias}", f"id: {sid or '(new)'}")
+        return ("Save script", raw_json)
+
+    if tool_name == "mcp__home-assistant__ha_config_remove_script":
+        sid = tool_input.get("script_id") or ""
+        return (f"Delete script {sid}".strip(), raw_json)
+
+    if tool_name == "mcp__home-assistant__ha_config_set_helper":
+        cfg = tool_input.get("config") or {}
+        name = cfg.get("name") if isinstance(cfg, dict) else None
+        domain = tool_input.get("domain") or ""
+        if name:
+            return (f"Save {domain} helper: {name}".strip(), raw_json)
+        return ("Save helper", raw_json)
+
+    if tool_name == "mcp__home-assistant__ha_config_remove_helper":
+        hid = tool_input.get("helper_id") or ""
+        return (f"Delete helper {hid}".strip(), raw_json)
+
+    if tool_name == "mcp__home-assistant__ha_config_set_dashboard":
+        dash_id = tool_input.get("dashboard_id") or ""
+        return (f"Save dashboard {dash_id}".strip(), raw_json)
+
+    if tool_name == "mcp__home-assistant__ha_bulk_control":
+        ops = tool_input.get("operations") or []
+        n = len(ops) if isinstance(ops, list) else 0
+        return (f"Bulk control: {n} operation{'s' if n != 1 else ''}", raw_json)
+
+    if tool_name == "mcp__home-assistant__ha_backup_create":
+        return ("Create backup", raw_json)
+    if tool_name == "mcp__home-assistant__ha_backup_restore":
+        return ("Restore backup", raw_json)
+
+    return (short, raw_json)
+
+
 @app.post("/api/internal/permission")
 async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
     """Called by the PreToolUse hook when ask_bash / ask_webfetch is on. Emits
@@ -646,7 +757,12 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
         plan = ""
         if body.tool_name in ("exit_plan_mode", "ExitPlanMode"):
             plan = body.tool_input.get("plan", "") if isinstance(body.tool_input, dict) else ""
-        description = plan or cmd or url or _json.dumps(body.tool_input)[:240]
+        title = ""
+        if body.tool_name.startswith("mcp__"):
+            title, mcp_body = _mcp_card_text(body.tool_name, body.tool_input)
+            description = mcp_body or _json.dumps(body.tool_input)[:240]
+        else:
+            description = plan or cmd or url or _json.dumps(body.tool_input)[:240]
         evt = {
             "type": "permission_request",
             "id": request_id,
@@ -654,6 +770,8 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
             "description": description,
             "input": body.tool_input,
         }
+        if title:
+            evt["title"] = title
         if host:
             evt["domain"] = host
         await sess._emit(evt)

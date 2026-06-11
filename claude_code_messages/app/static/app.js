@@ -413,7 +413,14 @@ function appendPermissionCard(evt) {
   const allowDomainBtn = domain
     ? `<button class="approve-domain">Always Allow</button>`
     : '';
-  const title = isPlan ? 'Plan ready — start coding?' : `Approve ${escapeHtml(evt.tool || 'action')}?`;
+  let title;
+  if (isPlan) {
+    title = 'Plan ready — start coding?';
+  } else if (evt.title) {
+    title = `${escapeHtml(evt.title)}?`;
+  } else {
+    title = `Approve ${escapeHtml(evt.tool || 'action')}?`;
+  }
   const approveLabel = isPlan ? 'Approve & start coding' : 'Allow once';
   const rejectLabel = isPlan ? 'Refine plan' : 'Reject';
   const planNotice = isPlan
