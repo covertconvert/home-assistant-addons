@@ -1658,7 +1658,7 @@ async function bootApp() {
   if (target) selectSession(target);
 }
 
-// iOS keyboard handling inside HA's ingress iframe.
+// iOS keyboard handling inside HA's ingress iframe. (v0.1.53)
 //
 // HA's panel container scrolls the iframe ELEMENT up when iOS shows the
 // keyboard. From inside the iframe we can't see that movement — vv.offsetTop
