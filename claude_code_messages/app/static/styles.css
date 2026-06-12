@@ -64,11 +64,6 @@ button { font: inherit; color: inherit; background: transparent; border: 0; curs
 textarea { font: inherit; color: inherit; background: transparent; border: 0; resize: none; outline: 0; width: 100%; }
 
 #app { display: grid; grid-template-rows: auto 1fr auto; height: var(--app-h, 100dvh); }
-/* iOS keeps reserving the home-indicator safe-area-inset-bottom even after
-   the keyboard covers it, leaving a dead zone under the composer. While JS
-   has flagged the keyboard as open, zero it out so the composer sits flush
-   against the keyboard. */
-:root[data-keyboard-open="1"] { --safe-bottom: 0px; }
 
 #topbar {
   display: flex; align-items: center; gap: 12px;
@@ -85,20 +80,14 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
 #topbar h1 { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; margin: 0; text-align: left; line-height: 1.25; overflow-wrap: anywhere; }
 #topbar button { font-size: 22px; line-height: 1; min-width: 36px; min-height: 36px; }
 .mode-status {
-  font-size: 12px; font-weight: 500; color: var(--text-dim);
-  letter-spacing: 0.02em; line-height: 1;
-  padding: 0 10px; height: 28px;
-  border: 1px solid var(--border); border-radius: 999px;
-  background: var(--panel-2);
-  cursor: pointer; user-select: none;
-  -webkit-tap-highlight-color: transparent;
-  display: inline-flex; align-items: center; flex: 0 0 auto;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  font-size: 15px; font-weight: 600; letter-spacing: 0;
+  user-select: none; -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, color 0.15s;
 }
 .mode-status:active { background: var(--border); }
 .mode-status[data-mode="plan"] {
-  color: #c5a3ff; font-weight: 600;
-  border-color: #c5a3ff55; background: #c5a3ff15;
+  color: #c5a3ff;
+  background: #c5a3ff22;
 }
 
 .resume-prompt { padding: 0 !important; background: transparent !important; }
@@ -386,8 +375,12 @@ button.danger:active { background: color-mix(in srgb, var(--danger) 20%, transpa
   background: var(--panel); border-top: 1px solid var(--border);
   position: sticky; bottom: 0;
 }
+/* When the textarea is focused the iOS keyboard is up — drop the home-bar
+   safe-area inset so the composer sits flush against the keyboard accessory
+   bar instead of leaving a dead zone below it. */
+#composer:focus-within { padding-bottom: 4px; }
 .composer-row { display: flex; align-items: flex-end; gap: 8px; }
-#composer button:not(.mode-status) { min-width: 40px; min-height: 40px; border-radius: 50%; background: var(--panel-2); font-size: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-dim); }
+#composer button { min-width: 40px; min-height: 40px; border-radius: 50%; background: var(--panel-2); font-size: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-dim); }
 #composer button svg { display: block; }
 #send { background: var(--accent); color: white; }
 #stop { background: var(--danger); color: white; }
