@@ -958,6 +958,13 @@ els.fileInput.addEventListener('change', () => {
   els.fileInput.value = '';
 });
 
+// `.kb-up` shrinks the composer's bottom padding while the keyboard is up so
+// it sits flush against the keyboard accessory bar rather than over the iOS
+// home-bar inset. Toggled on textarea focus/blur.
+const composerEl = document.getElementById('composer');
+els.input.addEventListener('focus', () => composerEl.classList.add('kb-up'));
+els.input.addEventListener('blur', () => composerEl.classList.remove('kb-up'));
+
 els.drawerToggle.addEventListener('click', openDrawer);
 els.drawerClose.addEventListener('click', closeDrawer);
 els.drawerSearch.addEventListener('input', onSearchInput);

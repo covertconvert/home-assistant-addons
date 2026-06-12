@@ -80,7 +80,7 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
 #topbar h1 { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; margin: 0; text-align: left; line-height: 1.25; overflow-wrap: anywhere; }
 #topbar button { font-size: 22px; line-height: 1; min-width: 36px; min-height: 36px; }
 .mode-status {
-  font-size: 15px; font-weight: 600; letter-spacing: 0;
+  font-size: 11px; font-weight: 600; letter-spacing: 0;
   user-select: none; -webkit-tap-highlight-color: transparent;
   transition: background 0.15s, color 0.15s;
 }
@@ -374,18 +374,22 @@ button.danger:active { background: color-mix(in srgb, var(--danger) 20%, transpa
 
 #composer {
   display: flex; flex-direction: column; align-items: stretch; gap: 4px;
-  padding: 10px 10px calc(var(--safe-bottom) + 8px);
+  padding: 8px 8px calc(var(--safe-bottom) + 6px);
   background: var(--panel); border-top: 1px solid var(--border);
   position: sticky; bottom: 0;
 }
-.composer-row { display: flex; align-items: flex-end; gap: 8px; }
-#composer button { min-width: 40px; min-height: 40px; border-radius: 50%; background: var(--panel-2); font-size: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-dim); }
-#composer button svg { display: block; }
+/* While the iOS keyboard is up, drop the home-bar safe-area inset so the
+   composer sits flush against the keyboard accessory bar instead of leaving a
+   dead zone below it. */
+#composer.kb-up { padding-bottom: 4px; }
+.composer-row { display: flex; align-items: flex-end; gap: 6px; }
+#composer button { min-width: 30px; min-height: 30px; border-radius: 50%; background: var(--panel-2); font-size: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-dim); }
+#composer button svg { display: block; width: 15px; height: 15px; }
 #send { background: var(--accent); color: white; }
 #stop { background: var(--danger); color: white; }
 #input {
-  flex: 1; min-height: 40px; max-height: 140px; padding: 10px 14px;
-  background: var(--panel-2); border-radius: 20px;
+  flex: 1; min-height: 30px; max-height: 105px; padding: 7px 11px;
+  background: var(--panel-2); border-radius: 15px;
 }
 #attachments { display: flex; gap: 6px; flex-wrap: wrap; }
 #attachments:empty { display: none; }
