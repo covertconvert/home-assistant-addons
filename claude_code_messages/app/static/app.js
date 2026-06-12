@@ -1689,6 +1689,11 @@ function trackVisualViewport() {
   };
   vv.addEventListener('resize', apply);
   vv.addEventListener('scroll', apply);
+  // Safety net: after the native file picker closes (or any full-screen
+  // modal), iOS may have changed visualViewport.height without firing
+  // resize inside the HA ingress iframe. Window regains focus on close,
+  // so reapply then to avoid the composer being stranded mid-page.
+  window.addEventListener('focus', apply);
   apply();
 }
 trackVisualViewport();
