@@ -1695,6 +1695,18 @@ async function bootApp() {
     );
   };
 
+  // Inside an iframe on iOS WKWebView, `100%` / `100dvh` resolve against the
+  // parent window's layout viewport, not the iframe element's actual size.
+  // Even with the iframe sized to pvv.height, html/body end up taller than
+  // the visible area, and iOS's scroll-input-into-view shifts the whole
+  // iframe content upward — exposing body background under the composer.
+  // Lock html + body to pvv.height explicitly to stop that scroll.
+  const lockHeights = (h) => {
+    document.documentElement.style.height = h + 'px';
+    document.body.style.height = h + 'px';
+    app.style.height = h + 'px';
+  };
+
   if (fe && pvv) {
     fe.style.position = 'fixed';
     fe.style.left = '0';
@@ -1702,7 +1714,7 @@ async function bootApp() {
     const apply = () => {
       fe.style.top = pvv.offsetTop + 'px';
       fe.style.height = pvv.height + 'px';
-      app.style.height = pvv.height + 'px';
+      lockHeights(pvv.height);
       let fullH = pvv.height;
       try { fullH = window.parent.innerHeight || fullH; } catch (_) {}
       setKeyboardClass(pvv.height, fullH);
@@ -1713,7 +1725,7 @@ async function bootApp() {
     apply();
   } else {
     const apply = () => {
-      app.style.height = vv.height + 'px';
+      lockHeights(vv.height);
       setKeyboardClass(vv.height, window.innerHeight);
     };
     vv.addEventListener('resize', apply);

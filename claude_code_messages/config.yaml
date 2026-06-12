@@ -1,5 +1,5 @@
 name: Claude Code Messages
-version: "0.1.55"
+version: "0.1.56"
 slug: claude_code_messages
 description: Graphical chat interface for the Claude Code CLI, designed for the HA companion app
 arch:
