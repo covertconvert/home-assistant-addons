@@ -952,6 +952,16 @@ els.input.addEventListener('paste', (e) => {
 els.send.addEventListener('click', submit);
 els.stop.addEventListener('click', interrupt);
 els.attach.addEventListener('click', () => els.fileInput.click());
+
+// Tapping a composer-row button blurs the focused textarea, which removes
+// :focus-within, which shifts the composer down, which moves the button out
+// from under the user's finger — so their tap lands on empty space and only
+// dismisses the keyboard. preventDefault on mousedown stops the focus change
+// without blocking the click, so buttons fire on the first tap and the
+// keyboard stays up (iMessage behavior).
+document.getElementById('composer').addEventListener('mousedown', (e) => {
+  if (e.target.closest('button')) e.preventDefault();
+});
 els.fileInput.addEventListener('change', () => {
   for (const f of els.fileInput.files) addAttachment(f);
   els.fileInput.value = '';
