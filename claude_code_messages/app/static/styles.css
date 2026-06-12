@@ -18,6 +18,11 @@
   --safe-bottom: env(safe-area-inset-bottom, 0);
 }
 
+/* When the soft keyboard is up the iframe is repositioned above it, so the
+   home-indicator inset is no longer meaningful — kill it to stop a ~34px
+   dark band rendering under the composer. Toggled from app.js. */
+html.keyboard-up { --safe-bottom: 0px; }
+
 /* Light theme — applied when <html data-theme="light"> or when
    data-theme="system" and the OS reports a light preference. */
 html[data-theme="light"] {

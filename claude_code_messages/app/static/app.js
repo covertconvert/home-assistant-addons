@@ -1683,6 +1683,18 @@ async function bootApp() {
     fe = null; pvv = null;
   }
 
+  // Keyboard-up detection: when iOS shows the keyboard, the visible viewport
+  // shrinks but env(safe-area-inset-bottom) keeps reporting ~34px for the
+  // home indicator. That inset is meaningless when the composer sits above
+  // the keyboard, and turns into a ~34px dark band under the composer.
+  // Toggle `html.keyboard-up` so CSS can zero --safe-bottom in that state.
+  const setKeyboardClass = (visibleH, fullH) => {
+    document.documentElement.classList.toggle(
+      'keyboard-up',
+      fullH - visibleH > 100
+    );
+  };
+
   if (fe && pvv) {
     fe.style.position = 'fixed';
     fe.style.left = '0';
@@ -1691,13 +1703,19 @@ async function bootApp() {
       fe.style.top = pvv.offsetTop + 'px';
       fe.style.height = pvv.height + 'px';
       app.style.height = pvv.height + 'px';
+      let fullH = pvv.height;
+      try { fullH = window.parent.innerHeight || fullH; } catch (_) {}
+      setKeyboardClass(pvv.height, fullH);
     };
     pvv.addEventListener('resize', apply);
     pvv.addEventListener('scroll', apply);
     window.addEventListener('focus', apply);
     apply();
   } else {
-    const apply = () => { app.style.height = vv.height + 'px'; };
+    const apply = () => {
+      app.style.height = vv.height + 'px';
+      setKeyboardClass(vv.height, window.innerHeight);
+    };
     vv.addEventListener('resize', apply);
     vv.addEventListener('scroll', apply);
     window.addEventListener('focus', apply);
