@@ -96,29 +96,6 @@ function applyTheme(theme) {
 }
 applyTheme(localStorage.getItem('theme') || 'dark');
 
-// --- Visual viewport sync ------------------------------------------------
-// iOS WebView doesn't shrink 100dvh when the virtual keyboard opens, and it
-// keeps reporting the home-indicator safe-area-inset-bottom even after the
-// keyboard has covered it. Result: tapping the input pushes the composer up
-// but leaves a huge dead zone between the mode-status row and the keyboard.
-// Track visualViewport.height as --app-h and flip a data attribute the CSS
-// uses to zero out --safe-bottom while the keyboard is open.
-
-function syncViewport() {
-  const vv = window.visualViewport;
-  if (!vv) return;
-  document.documentElement.style.setProperty('--app-h', `${vv.height}px`);
-  // 100px threshold separates the iOS URL-bar collapse (~50–60px) from a
-  // real keyboard (~250–400px). Anything bigger than 100 = keyboard.
-  const kbOpen = (window.innerHeight - vv.height) > 100;
-  document.documentElement.dataset.keyboardOpen = kbOpen ? '1' : '0';
-}
-if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', syncViewport);
-  window.visualViewport.addEventListener('scroll', syncViewport);
-  syncViewport();
-}
-
 // --- API helpers ---------------------------------------------------------
 
 async function api(path, opts = {}) {
@@ -958,22 +935,6 @@ els.fileInput.addEventListener('change', () => {
   els.fileInput.value = '';
 });
 
-// `.kb-up` shrinks the composer's bottom padding while the keyboard is up so
-// it sits flush against the keyboard accessory bar rather than over the iOS
-// home-bar inset. Toggled on textarea focus/blur.
-const composerEl = document.getElementById('composer');
-els.input.addEventListener('focus', () => composerEl.classList.add('kb-up'));
-els.input.addEventListener('blur', () => composerEl.classList.remove('kb-up'));
-
-// Tapping a composer button would blur the textarea, remove `.kb-up`, grow
-// the composer by ~30px, and slide the button out from under the user's
-// finger — the click then lands on empty space and only dismisses the
-// keyboard. preventDefault on mousedown stops the focus change without
-// blocking the click, so buttons fire on the first tap.
-composerEl.addEventListener('mousedown', (e) => {
-  if (e.target.closest('button')) e.preventDefault();
-});
-
 els.drawerToggle.addEventListener('click', openDrawer);
 els.drawerClose.addEventListener('click', closeDrawer);
 els.drawerSearch.addEventListener('input', onSearchInput);
@@ -1670,42 +1631,6 @@ async function bootApp() {
   if (!target && state.sessions.length > 0) target = state.sessions[0].id;
   if (target) selectSession(target);
 }
-
-// iOS virtual keyboard inside the HA ingress iframe doesn't shrink the
-// iframe's `dvh` viewport — the parent just scrolls us up, cutting off the
-// topbar. Pin #app to the visualViewport height so the layout reflows
-// instead of the parent scrolling.
-function trackVisualViewport() {
-  const vv = window.visualViewport;
-  if (!vv) return;
-  const app = document.getElementById('app');
-  const apply = () => {
-    app.style.height = vv.height + 'px';
-    // iOS scrolls the iframe up to reveal a focused input even when our
-    // layout already accommodates the keyboard. Force-pin to top.
-    window.scrollTo(0, 0);
-    document.documentElement.scrollTop = 0;
-    document.body.scrollTop = 0;
-  };
-  vv.addEventListener('resize', apply);
-  vv.addEventListener('scroll', apply);
-  // Safety net: after the native file picker closes (or any full-screen
-  // modal), iOS may have changed visualViewport.height without firing
-  // resize inside the HA ingress iframe. Window regains focus on close,
-  // so reapply then to avoid the composer being stranded mid-page.
-  window.addEventListener('focus', apply);
-  apply();
-}
-trackVisualViewport();
-
-// Same scroll-pin defense on focus — visualViewport scroll events fire
-// AFTER iOS does its scroll, but the focus event fires first.
-document.addEventListener('focusin', (e) => {
-  if (e.target.matches('input, textarea')) {
-    setTimeout(() => { window.scrollTo(0, 0); }, 50);
-    setTimeout(() => { window.scrollTo(0, 0); }, 300);
-  }
-});
 
 (async () => {
   try {
