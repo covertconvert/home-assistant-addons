@@ -962,14 +962,25 @@ els.attach.addEventListener('click', () => {
   els.fileInput.click();
 });
 
-// Tapping a composer-row button blurs the focused textarea, which removes
-// :focus-within, which shifts the composer down, which moves the button out
-// from under the user's finger — so their tap lands on empty space and only
-// dismisses the keyboard. preventDefault on mousedown stops the focus change
-// without blocking the click, so buttons fire on the first tap and the
-// keyboard stays up (iMessage behavior).
+// Tapping a composer-row button blurs the focused textarea, which would shift
+// the composer down (see .kb-up below), which moves the button out from under
+// the user's finger — so their tap lands on empty space and only dismisses the
+// keyboard. preventDefault on mousedown stops the focus change without blocking
+// the click, so buttons fire on the first tap and the keyboard stays up
+// (iMessage behavior).
 document.getElementById('composer').addEventListener('mousedown', (e) => {
   if (e.target.closest('button')) e.preventDefault();
+});
+
+// .kb-up shrinks the composer's bottom padding while the keyboard is up. We
+// add it on textarea focus and remove on blur — but skip removal if we're
+// mid-picker, otherwise the composer's geometry springs back as the picker
+// opens and iOS dismisses the keyboard.
+const composerEl = document.getElementById('composer');
+els.input.addEventListener('focus', () => composerEl.classList.add('kb-up'));
+els.input.addEventListener('blur', () => {
+  if (restoreFocusAfterPicker) return;
+  composerEl.classList.remove('kb-up');
 });
 els.fileInput.addEventListener('change', () => {
   for (const f of els.fileInput.files) addAttachment(f);
