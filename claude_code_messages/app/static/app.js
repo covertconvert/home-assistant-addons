@@ -952,51 +952,10 @@ els.input.addEventListener('paste', (e) => {
 els.send.addEventListener('click', submit);
 els.stop.addEventListener('click', interrupt);
 
-// iOS dismisses the keyboard when the native file picker opens. Track
-// whether the textarea was focused before the picker; if so, refocus
-// after the picker closes (whether the user picked or cancelled) so they
-// can resume typing with at most one tap to re-open the keyboard.
-let restoreFocusAfterPicker = false;
-els.attach.addEventListener('click', () => {
-  restoreFocusAfterPicker = document.activeElement === els.input;
-  els.fileInput.click();
-});
-
-// Tapping a composer-row button blurs the focused textarea, which would shift
-// the composer down (see .kb-up below), which moves the button out from under
-// the user's finger — so their tap lands on empty space and only dismisses the
-// keyboard. preventDefault on mousedown stops the focus change without blocking
-// the click, so buttons fire on the first tap and the keyboard stays up
-// (iMessage behavior).
-document.getElementById('composer').addEventListener('mousedown', (e) => {
-  if (e.target.closest('button')) e.preventDefault();
-});
-
-// .kb-up shrinks the composer's bottom padding while the keyboard is up. We
-// add it on textarea focus and remove on blur — but skip removal if we're
-// mid-picker, otherwise the composer's geometry springs back as the picker
-// opens and iOS dismisses the keyboard.
-const composerEl = document.getElementById('composer');
-els.input.addEventListener('focus', () => composerEl.classList.add('kb-up'));
-els.input.addEventListener('blur', () => {
-  if (restoreFocusAfterPicker) return;
-  composerEl.classList.remove('kb-up');
-});
+els.attach.addEventListener('click', () => els.fileInput.click());
 els.fileInput.addEventListener('change', () => {
   for (const f of els.fileInput.files) addAttachment(f);
   els.fileInput.value = '';
-  if (restoreFocusAfterPicker) {
-    restoreFocusAfterPicker = false;
-    requestAnimationFrame(() => els.input.focus());
-  }
-});
-// iOS file picker fires no event on cancel, but `window` regains focus
-// when the picker dismisses without selection.
-window.addEventListener('focus', () => {
-  if (restoreFocusAfterPicker) {
-    restoreFocusAfterPicker = false;
-    requestAnimationFrame(() => els.input.focus());
-  }
 });
 
 els.drawerToggle.addEventListener('click', openDrawer);

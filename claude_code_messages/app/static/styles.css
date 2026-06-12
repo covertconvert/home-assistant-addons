@@ -378,13 +378,6 @@ button.danger:active { background: color-mix(in srgb, var(--danger) 20%, transpa
   background: var(--panel); border-top: 1px solid var(--border);
   position: sticky; bottom: 0;
 }
-/* While the iOS keyboard is up, drop the home-bar safe-area inset so the
-   composer sits flush against the keyboard accessory bar instead of leaving a
-   dead zone below it. JS toggles .kb-up rather than CSS :focus-within so we
-   can hold the shrunk geometry across the native file picker (focus-within
-   would un-match the moment the textarea blurred, springing the padding back
-   ~30px and triggering iOS to dismiss the keyboard). */
-#composer.kb-up { padding-bottom: 4px; }
 .composer-row { display: flex; align-items: flex-end; gap: 8px; }
 #composer button { min-width: 40px; min-height: 40px; border-radius: 50%; background: var(--panel-2); font-size: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-dim); }
 #composer button svg { display: block; }
