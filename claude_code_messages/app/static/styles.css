@@ -79,20 +79,6 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
 }
 #topbar h1 { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; margin: 0; text-align: left; line-height: 1.25; overflow-wrap: anywhere; }
 #topbar button { font-size: 22px; line-height: 1; min-width: 36px; min-height: 36px; }
-.mode-status {
-  font-size: 11px; font-weight: 600; letter-spacing: 0;
-  user-select: none; -webkit-tap-highlight-color: transparent;
-  transition: background 0.15s, color 0.15s;
-}
-.mode-status:active { background: var(--border); }
-/* #composer button (ID-specificity) sets background: var(--panel-2), so the
-   plan-tint rule has to match the same selector chain to win. */
-#composer button.mode-status[data-mode="plan"] {
-  color: #c5a3ff;
-  background: #c5a3ff44;
-  box-shadow: inset 0 0 0 1px #c5a3ff88;
-}
-
 .resume-prompt { padding: 0 !important; background: transparent !important; }
 .resume-btn {
   background: var(--panel-2); color: var(--text); font-weight: 600;
@@ -383,9 +369,35 @@ button.danger:active { background: color-mix(in srgb, var(--danger) 20%, transpa
 #composer button svg { display: block; width: 15px; height: 15px; }
 #send { background: var(--accent); color: white; }
 #stop { background: var(--danger); color: white; }
+#composer-plus { transition: transform 0.18s ease; }
+#composer-plus[aria-expanded="true"] { transform: rotate(45deg); background: var(--panel-2); }
 #input {
   flex: 1; min-height: 30px; max-height: 105px; padding: 7px 11px;
   background: var(--panel-2); border-radius: 15px;
+  transition: box-shadow 0.15s;
+}
+#input.plan-mode {
+  box-shadow: inset 0 0 0 1px #c5a3ff88;
+}
+#composer-panel {
+  display: grid; grid-template-columns: repeat(2, 1fr);
+  gap: 6px; padding: 6px 0 2px;
+}
+#composer-panel[hidden] { display: none; }
+/* Override `#composer button` defaults (30x30 circle) — these are tiles. */
+#composer button.cp-option {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; padding: 14px 8px;
+  background: var(--panel-2); border-radius: 12px;
+  color: var(--text); font-size: 12px; line-height: 1;
+  min-width: 0; min-height: 0;
+}
+#composer button.cp-option svg { width: 22px; height: 22px; display: block; }
+#composer button.cp-option:active { background: var(--border); }
+#composer button.cp-option.active {
+  color: #c5a3ff;
+  background: #c5a3ff22;
+  box-shadow: inset 0 0 0 1px #c5a3ff88;
 }
 #attachments { display: flex; gap: 6px; flex-wrap: wrap; }
 #attachments:empty { display: none; }

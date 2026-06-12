@@ -25,7 +25,6 @@ const els = {
   input: $('#input'),
   send: $('#send'),
   stop: $('#stop'),
-  attach: $('#attach'),
   fileInput: $('#file-input'),
   attachments: $('#attachments'),
   title: $('#session-title'),
@@ -38,7 +37,10 @@ const els = {
   newProject: $('#new-project'),
   newSession: $('#new-session'),
   newSessionDrawer: $('#new-session-drawer'),
-  modeStatus: $('#mode-status'),
+  composerPlus: $('#composer-plus'),
+  composerPanel: $('#composer-panel'),
+  cpPhotos: $('#cp-photos'),
+  cpPlan: $('#cp-plan'),
   actionMenu: $('#action-menu'),
 };
 
@@ -929,10 +931,35 @@ els.input.addEventListener('paste', (e) => {
 els.send.addEventListener('click', submit);
 els.stop.addEventListener('click', interrupt);
 
-els.attach.addEventListener('click', () => els.fileInput.click());
 els.fileInput.addEventListener('change', () => {
   for (const f of els.fileInput.files) addAttachment(f);
   els.fileInput.value = '';
+});
+
+// Composer "+" panel: replaces attach + mode-chip with a single button that
+// opens a sheet of options. Tapping + blurs the textarea so the keyboard
+// dismisses cleanly into the panel's footprint (iMessage / WhatsApp pattern).
+function setPanelOpen(open) {
+  els.composerPanel.hidden = !open;
+  els.composerPlus.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+els.composerPlus.addEventListener('click', () => {
+  const isOpen = !els.composerPanel.hidden;
+  if (isOpen) {
+    setPanelOpen(false);
+    els.input.focus();
+  } else {
+    els.input.blur();
+    setPanelOpen(true);
+  }
+});
+els.input.addEventListener('focus', () => setPanelOpen(false));
+els.cpPhotos.addEventListener('click', () => {
+  setPanelOpen(false);
+  els.fileInput.click();
+});
+els.cpPlan.addEventListener('click', () => {
+  setPermissionMode(currentMode() === 'plan' ? 'default' : 'plan');
 });
 
 els.drawerToggle.addEventListener('click', openDrawer);
@@ -944,19 +971,18 @@ els.newSession.addEventListener('click', () => createSession(null));
 els.newSessionDrawer.addEventListener('click', () => { createSession(null); closeDrawer(); });
 els.newProject.addEventListener('click', createProject);
 function renderModeToggle(mode) {
-  const el = els.modeStatus;
-  el.dataset.mode = mode;
-  el.textContent = mode === 'plan' ? 'P' : 'N';
+  els.cpPlan.dataset.mode = mode;
+  els.cpPlan.classList.toggle('active', mode === 'plan');
+  els.input.classList.toggle('plan-mode', mode === 'plan');
 }
 
-els.modeStatus.addEventListener('click', () => {
-  const cur = els.modeStatus.dataset.mode || 'default';
-  setPermissionMode(cur === 'plan' ? 'default' : 'plan');
-});
+function currentMode() {
+  return els.cpPlan.dataset.mode || 'default';
+}
 
 async function setPermissionMode(next) {
   if (!state.sessionId) return;
-  const cur = els.modeStatus.dataset.mode || 'default';
+  const cur = currentMode();
   if (cur === next) return;
   renderModeToggle(next);
   try {
