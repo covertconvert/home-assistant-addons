@@ -1661,12 +1661,20 @@ async function bootApp() {
 // Inside the HA ingress iframe, `100dvh` doesn't reliably shrink when the iOS
 // keyboard opens — leaving a large dead zone between the composer and the
 // keyboard accessory bar. Pin #app to visualViewport.height so the composer
-// sits flush with the keyboard. Nothing else; just this height pin.
+// sits flush with the keyboard. The fixed topbar is anchored to the LAYOUT
+// viewport (not visual), so when iOS scrolls within the layout viewport to
+// surface the focused input, the topbar ends up at visual y=-vv.offsetTop —
+// off-screen above. Pinning topbar.top = vv.offsetTop tracks it back into
+// the visual viewport.
 (() => {
   const vv = window.visualViewport;
   if (!vv) return;
   const app = document.getElementById('app');
-  const apply = () => { app.style.height = vv.height + 'px'; };
+  const topbar = document.getElementById('topbar');
+  const apply = () => {
+    app.style.height = vv.height + 'px';
+    if (topbar) topbar.style.top = vv.offsetTop + 'px';
+  };
   vv.addEventListener('resize', apply);
   vv.addEventListener('scroll', apply);
   // After the native file picker dismisses, vv.resize doesn't always fire in
