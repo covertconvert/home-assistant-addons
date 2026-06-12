@@ -965,6 +965,15 @@ const composerEl = document.getElementById('composer');
 els.input.addEventListener('focus', () => composerEl.classList.add('kb-up'));
 els.input.addEventListener('blur', () => composerEl.classList.remove('kb-up'));
 
+// Tapping a composer button would blur the textarea, remove `.kb-up`, grow
+// the composer by ~30px, and slide the button out from under the user's
+// finger — the click then lands on empty space and only dismisses the
+// keyboard. preventDefault on mousedown stops the focus change without
+// blocking the click, so buttons fire on the first tap.
+composerEl.addEventListener('mousedown', (e) => {
+  if (e.target.closest('button')) e.preventDefault();
+});
+
 els.drawerToggle.addEventListener('click', openDrawer);
 els.drawerClose.addEventListener('click', closeDrawer);
 els.drawerSearch.addEventListener('input', onSearchInput);
