@@ -1658,6 +1658,23 @@ async function bootApp() {
   if (target) selectSession(target);
 }
 
+// Inside the HA ingress iframe, `100dvh` doesn't reliably shrink when the iOS
+// keyboard opens — leaving a large dead zone between the composer and the
+// keyboard accessory bar. Pin #app to visualViewport.height so the composer
+// sits flush with the keyboard. Nothing else; just this height pin.
+(() => {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const app = document.getElementById('app');
+  const apply = () => { app.style.height = vv.height + 'px'; };
+  vv.addEventListener('resize', apply);
+  vv.addEventListener('scroll', apply);
+  // After the native file picker dismisses, vv.resize doesn't always fire in
+  // the iframe. Window regains focus on close — re-apply then.
+  window.addEventListener('focus', apply);
+  apply();
+})();
+
 (async () => {
   try {
     const r = await api('api/auth/status');
