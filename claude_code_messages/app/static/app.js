@@ -1675,6 +1675,22 @@ async function bootApp() {
   apply();
 })();
 
+// #topbar is position:fixed so it stays glued to the iframe viewport top
+// regardless of rubber-band scroll. The thread needs padding-top equal to
+// the topbar's real height (varies with safe-area-inset on rotation, dynamic
+// island, etc.) — measure it and publish as --topbar-h.
+(() => {
+  const tb = document.getElementById('topbar');
+  if (!tb) return;
+  const measure = () => {
+    document.documentElement.style.setProperty('--topbar-h', tb.offsetHeight + 'px');
+  };
+  measure();
+  window.addEventListener('resize', measure);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', measure);
+  new ResizeObserver(measure).observe(tb);
+})();
+
 (async () => {
   try {
     const r = await api('api/auth/status');
