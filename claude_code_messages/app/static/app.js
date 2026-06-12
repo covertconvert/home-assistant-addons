@@ -1658,21 +1658,51 @@ async function bootApp() {
   if (target) selectSession(target);
 }
 
-// Inside the HA ingress iframe, `100dvh` doesn't reliably shrink when the iOS
-// keyboard opens — leaving a large dead zone between the composer and the
-// keyboard accessory bar. Pin #app to visualViewport.height so the composer
-// sits flush with the keyboard. Nothing else; just this height pin.
+// iOS keyboard handling inside HA's ingress iframe.
+//
+// HA's panel container scrolls the iframe ELEMENT up when iOS shows the
+// keyboard. From inside the iframe we can't see that movement — vv.offsetTop
+// reports zero. But ingress is same-origin and HA's iframe has
+// `allow-same-origin`, so we can reach `window.parent.visualViewport` and
+// write to `window.frameElement.style` directly. That pins the iframe to the
+// visual viewport from inside, no companion HACS integration needed.
+//
+// Fallback (outside iframe / cross-origin block): just pin #app to vv.height.
 (() => {
   const vv = window.visualViewport;
   if (!vv) return;
   const app = document.getElementById('app');
-  const apply = () => { app.style.height = vv.height + 'px'; };
-  vv.addEventListener('resize', apply);
-  vv.addEventListener('scroll', apply);
-  // After the native file picker dismisses, vv.resize doesn't always fire in
-  // the iframe. Window regains focus on close — re-apply then.
-  window.addEventListener('focus', apply);
-  apply();
+
+  let fe = null, pvv = null;
+  try {
+    if (window.frameElement && window.parent && window.parent.visualViewport) {
+      fe = window.frameElement;
+      pvv = window.parent.visualViewport;
+    }
+  } catch (_) {
+    fe = null; pvv = null;
+  }
+
+  if (fe && pvv) {
+    fe.style.position = 'fixed';
+    fe.style.left = '0';
+    fe.style.right = '0';
+    const apply = () => {
+      fe.style.top = pvv.offsetTop + 'px';
+      fe.style.height = pvv.height + 'px';
+      app.style.height = pvv.height + 'px';
+    };
+    pvv.addEventListener('resize', apply);
+    pvv.addEventListener('scroll', apply);
+    window.addEventListener('focus', apply);
+    apply();
+  } else {
+    const apply = () => { app.style.height = vv.height + 'px'; };
+    vv.addEventListener('resize', apply);
+    vv.addEventListener('scroll', apply);
+    window.addEventListener('focus', apply);
+    apply();
+  }
 })();
 
 // #topbar is position:fixed so it stays glued to the iframe viewport top
