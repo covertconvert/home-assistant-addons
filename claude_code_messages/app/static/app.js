@@ -1690,16 +1690,10 @@ async function bootApp() {
     const apply = () => {
       fe.style.top = pvv.offsetTop + 'px';
       fe.style.height = pvv.height + 'px';
-      // Size #app to the iframe's OWN vv.height — iOS reports this
-      // excluding the form-accessory bar / QuickType chrome that overlays
-      // the iframe. Using pvv.height here leaves an empty band below the
-      // composer because pvv.height includes that overlay area.
-      app.style.height = Math.min(vv.height, pvv.height) + 'px';
+      app.style.height = pvv.height + 'px';
     };
     pvv.addEventListener('resize', apply);
     pvv.addEventListener('scroll', apply);
-    vv.addEventListener('resize', apply);
-    vv.addEventListener('scroll', apply);
     window.addEventListener('focus', apply);
     apply();
   } else {
