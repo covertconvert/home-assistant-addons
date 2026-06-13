@@ -631,6 +631,18 @@ button.primary { background: var(--accent); color: white; padding: 10px 16px; bo
 .usage-bar > div.danger { background: linear-gradient(90deg, #ef4444, #dc2626); }
 .usage-sub { color: var(--text-dim); font-size: 12px; margin-top: 6px; }
 
+#project-notes-modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 30;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: calc(var(--safe-top) + 24px) 16px 16px;
+}
+#project-notes-modal[hidden] { display: none; }
+#project-notes-modal .modal-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  width: 100%; max-width: 520px; max-height: calc(100dvh - 80px);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+
 #project-notes-text {
   width: 100%;
   min-height: 240px;
