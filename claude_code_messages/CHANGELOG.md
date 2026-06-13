@@ -2,7 +2,7 @@
 
 All notable changes for **Claude Code Messages**. Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [1.0.0] — TBD
+## [1.0.0] — 2026-06-13
 
 First public release. Carries everything below.
 
