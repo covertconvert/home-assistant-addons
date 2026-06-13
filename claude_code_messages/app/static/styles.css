@@ -515,10 +515,22 @@ body.has-ha-banner.has-usage-banner #thread { padding-top: calc(var(--topbar-h, 
 .usage-meter.warn { color: #f59e0b; }
 .usage-meter.danger { color: #ef4444; }
 .usage-meter svg { display: block; }
-.usage-meter .ring-fill,
-.usage-meter .gauge-fill,
-.usage-meter .gauge-needle {
-  transition: stroke-dasharray 0.4s ease, transform 0.4s ease;
+.usage-meter .ring-fill {
+  transition: stroke-dasharray 0.4s ease;
+}
+
+/* Usage modal overlay — was missing positioning so the X close button
+   was rendering off-canvas. Reuse the same backdrop pattern as #settings. */
+#cost-modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 30;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: calc(var(--safe-top) + 40px) 12px 24px;
+}
+#cost-modal[hidden] { display: none; }
+#cost-modal .modal-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  width: 100%; max-width: 460px; max-height: calc(100dvh - 80px);
+  display: flex; flex-direction: column; overflow: hidden;
 }
 button.primary { background: var(--accent); color: white; padding: 10px 16px; border-radius: 10px; font-weight: 600; }
 

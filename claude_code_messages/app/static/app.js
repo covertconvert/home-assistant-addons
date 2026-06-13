@@ -1367,13 +1367,11 @@ async function updateHaBanner() {
 
 const usageEls = {
   ringBtn: document.getElementById('usage-ring-btn'),
-  gaugeBtn: document.getElementById('usage-gauge-btn'),
   banner: document.getElementById('usage-banner'),
 };
 const usageBannerTextEl = usageEls.banner ? usageEls.banner.querySelector('.ha-banner-text') : null;
 const usageBannerCtaEl = usageEls.banner ? usageEls.banner.querySelector('.ha-banner-cta') : null;
-if (usageEls.ringBtn) usageEls.ringBtn.addEventListener('click', () => openCost());
-if (usageEls.gaugeBtn) usageEls.gaugeBtn.addEventListener('click', () => openCost());
+if (usageEls.ringBtn) usageEls.ringBtn.addEventListener('click', () => toggleCost());
 if (usageBannerCtaEl) usageBannerCtaEl.addEventListener('click', () => openCost());
 
 function setMeterTone(el, p) {
@@ -1389,14 +1387,6 @@ function updateUsageIcons(pct) {
     const fill = ring.querySelector('.ring-fill');
     if (fill) fill.setAttribute('stroke-dasharray', `${p100} 100`);
     setMeterTone(ring, pct == null ? null : p100);
-  }
-  const gauge = usageEls.gaugeBtn;
-  if (gauge) {
-    const fill = gauge.querySelector('.gauge-fill');
-    if (fill) fill.setAttribute('stroke-dasharray', `${p100} 100`);
-    const needle = gauge.querySelector('.gauge-needle');
-    if (needle) needle.setAttribute('transform', `rotate(${(p100 / 100) * 180} 18 22)`);
-    setMeterTone(gauge, pct == null ? null : p100);
   }
 }
 
@@ -1586,6 +1576,14 @@ async function openCost() {
     setUsageBlock(costEls.pct7d, costEls.bar7d, costEls.reset7d, u.seven_day_pct, u.seven_day_reset);
   } catch (err) {
     appendSystem(`Usage lookup failed: ${err.message}`);
+    costEls.panel.hidden = true;
+  }
+}
+
+function toggleCost() {
+  if (costEls.panel.hidden) {
+    openCost();
+  } else {
     costEls.panel.hidden = true;
   }
 }
