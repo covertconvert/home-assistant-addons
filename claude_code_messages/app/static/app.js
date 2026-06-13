@@ -434,16 +434,84 @@ function formatInline(text) {
   return out;
 }
 
+function friendlyToolLabel(name) {
+  if (!name || !name.startsWith('mcp__')) return name || '?';
+  const parts = name.split('__');
+  const server = parts[1] || '';
+  if (server === 'home-assistant') return 'HA';
+  return server.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || name;
+}
+
+function mcpInputSummary(name, input) {
+  if (!name || !name.startsWith('mcp__')) return '';
+  const tool = name.split('__').slice(2).join('__');
+  const i = input && typeof input === 'object' ? input : {};
+  const ent = (v) => Array.isArray(v) ? v.join(', ') : (v || '');
+  const clip = (s, n = 50) => {
+    const t = String(s);
+    return t.length > n ? t.slice(0, n - 1) + '…' : t;
+  };
+  switch (tool) {
+    case 'ha_call_service': {
+      const action = i.domain && i.service ? `${i.domain}.${i.service}` : (i.service || i.domain || 'call_service');
+      const target = ent(i.entity_id || (i.target && i.target.entity_id));
+      return target ? `${action} → ${clip(target)}` : action;
+    }
+    case 'ha_get_state': return i.entity_id ? `Get state: ${clip(ent(i.entity_id))}` : 'Get state';
+    case 'ha_get_bulk_status': {
+      const e = ent(i.entity_ids || i.entity_id);
+      const n = Array.isArray(i.entity_ids) ? i.entity_ids.length : 0;
+      return n > 3 ? `Bulk status × ${n}` : (e ? `Bulk status: ${clip(e)}` : 'Bulk status');
+    }
+    case 'ha_bulk_control': {
+      const n = Array.isArray(i.entity_ids) ? i.entity_ids.length : 0;
+      const svc = i.domain && i.service ? `${i.domain}.${i.service}` : (i.service || 'control');
+      return n ? `${svc} × ${n} entities` : svc;
+    }
+    case 'ha_search_entities': return i.query ? `Search entities: "${clip(i.query, 40)}"` : 'Search entities';
+    case 'ha_deep_search': return i.query ? `Deep search: "${clip(i.query, 40)}"` : 'Deep search';
+    case 'ha_eval_template': return i.template ? `Template: ${clip(i.template, 60)}` : 'Template';
+    case 'ha_get_overview': return 'Get overview';
+    case 'ha_get_logbook': return i.entity_id ? `Logbook: ${clip(ent(i.entity_id))}` : 'Logbook';
+    case 'ha_get_domain_docs': return i.domain ? `Docs: ${i.domain}` : 'Domain docs';
+    case 'ha_get_operation_status': return i.operation_id ? `Op status: ${i.operation_id}` : 'Op status';
+    case 'ha_config_list_dashboards': return 'List dashboards';
+    case 'ha_config_list_helpers': return 'List helpers';
+    case 'ha_config_get_automation': return i.id ? `Get automation: ${i.id}` : 'Get automation';
+    case 'ha_config_get_script': return i.id ? `Get script: ${i.id}` : 'Get script';
+    case 'ha_config_get_dashboard': return i.dashboard_id ? `Get dashboard: ${i.dashboard_id}` : 'Get dashboard';
+    case 'ha_config_set_automation': return i.id ? `Save automation: ${i.id}` : 'Save automation';
+    case 'ha_config_set_script': return i.id ? `Save script: ${i.id}` : 'Save script';
+    case 'ha_config_set_helper': return i.id ? `Save helper: ${i.id}` : 'Save helper';
+    case 'ha_config_set_dashboard': return i.dashboard_id ? `Save dashboard: ${i.dashboard_id}` : 'Save dashboard';
+    case 'ha_config_remove_automation': return i.id ? `Remove automation: ${i.id}` : 'Remove automation';
+    case 'ha_config_remove_helper': return i.id ? `Remove helper: ${i.id}` : 'Remove helper';
+    case 'ha_config_remove_script': return i.id ? `Remove script: ${i.id}` : 'Remove script';
+    case 'ha_config_delete_dashboard': return i.dashboard_id ? `Delete dashboard: ${i.dashboard_id}` : 'Delete dashboard';
+    case 'ha_config_update_dashboard_metadata': return i.dashboard_id ? `Update dashboard meta: ${i.dashboard_id}` : 'Update dashboard meta';
+    case 'ha_get_card_types': return 'List card types';
+    case 'ha_get_card_documentation': return i.card_type ? `Card docs: ${i.card_type}` : 'Card docs';
+    case 'ha_get_dashboard_guide': return 'Dashboard guide';
+    case 'ha_backup_create': return 'Create backup';
+    case 'ha_backup_restore': return i.backup_id ? `Restore backup: ${i.backup_id}` : 'Restore backup';
+    default: return tool.replace(/^ha_/, '').replace(/_/g, ' ');
+  }
+}
+
 function appendToolCard(evt) {
   const card = document.createElement('div');
   card.className = 'tool-card';
   card.id = `tool-${evt.id}`;
+  const isMcp = (evt.name || '').startsWith('mcp__');
+  const label = isMcp ? friendlyToolLabel(evt.name) : evt.name;
+  const derived = isMcp ? mcpInputSummary(evt.name, evt.input) : '';
+  const summary = (isMcp && derived) ? derived : (evt.summary || 'running…');
   card.innerHTML = `
     <div class="tool-head" role="button" tabindex="0" aria-expanded="false">
       <span class="tool-caret">▸</span>
-      <span class="tool-name">${escapeHtml(evt.name)}</span>
+      <span class="tool-name">${escapeHtml(label)}</span>
       <span class="tool-dash">—</span>
-      <span class="tool-summary">${escapeHtml(evt.summary || 'running…')}</span>
+      <span class="tool-summary">${escapeHtml(summary)}</span>
     </div>
     <div class="tool-body" hidden>
       <pre class="tool-input">${escapeHtml(JSON.stringify(evt.input || {}, null, 2))}</pre>
@@ -1264,6 +1332,36 @@ async function openSettings() {
 
 function closeSettings() { settingsEls.panel.hidden = true; }
 
+const haBannerEl = document.getElementById('ha-banner');
+const haBannerTextEl = haBannerEl ? haBannerEl.querySelector('.ha-banner-text') : null;
+const haBannerCtaEl = haBannerEl ? haBannerEl.querySelector('.ha-banner-cta') : null;
+if (haBannerCtaEl) haBannerCtaEl.addEventListener('click', () => openSettings());
+
+function setHaBanner(text) {
+  if (!haBannerEl) return;
+  if (text) {
+    if (haBannerTextEl) haBannerTextEl.textContent = text;
+    haBannerEl.hidden = false;
+    document.body.classList.add('has-ha-banner');
+  } else {
+    haBannerEl.hidden = true;
+    document.body.classList.remove('has-ha-banner');
+  }
+}
+
+async function updateHaBanner() {
+  try {
+    const s = await api('api/settings');
+    if (s.ha_mcp_enabled && (!s.ha_url || !s.ha_token_set)) {
+      setHaBanner('Home Assistant token missing — Claude can\u2019t control your house yet. Tap to add a Long-Lived Access Token.');
+    } else {
+      setHaBanner(null);
+    }
+  } catch {
+    setHaBanner(null);
+  }
+}
+
 async function saveSettings() {
   settingsEls.saveBtn.disabled = true;
   settingsEls.saveBtn.textContent = 'Saving…';
@@ -1281,8 +1379,28 @@ async function saveSettings() {
         notify_devices: notifyDevices,
       }),
     });
+    const savedMsg = 'Saved. Start a new chat (or use \u201cSummarize & start fresh\u201d on an existing one) to apply.';
     settingsEls.status.hidden = false;
-    settingsEls.status.textContent = 'Saved. Start a new chat (or use \u201cSummarize & start fresh\u201d on an existing one) to apply.';
+    settingsEls.status.classList.remove('error');
+    if (settingsEls.enabled.checked) {
+      settingsEls.status.textContent = 'Saved. Testing HA credentials\u2026';
+      try {
+        const r = await api('api/ha/test_token', { method: 'POST', body: JSON.stringify({}) });
+        if (r && r.ok) {
+          settingsEls.status.textContent = 'Saved. HA connection verified. ' + savedMsg.replace(/^Saved\. /, '');
+        } else {
+          settingsEls.status.classList.add('error');
+          settingsEls.status.textContent = `Saved, but HA test failed: ${(r && r.error) || 'unknown error'}`;
+        }
+      } catch (e) {
+        settingsEls.status.classList.add('error');
+        settingsEls.status.textContent = `Saved, but HA test failed: ${e.message}`;
+      }
+      updateHaBanner();
+    } else {
+      settingsEls.status.textContent = savedMsg;
+      updateHaBanner();
+    }
   } catch (e) {
     settingsEls.status.hidden = false;
     settingsEls.status.textContent = `Save failed: ${e.message}`;
@@ -1646,6 +1764,7 @@ async function bootApp() {
   authEls.screen.hidden = true;
   authEls.app.hidden = false;
   await loadAll();
+  updateHaBanner();
   // Deep-link from notification tap: ?session=<id> drops the user straight
   // into the right chat. Falls back to most-recent if the id is unknown.
   let target = null;

@@ -473,6 +473,29 @@ button.danger:active { background: color-mix(in srgb, var(--danger) 20%, transpa
 .how-to ol { margin: 8px 0 0; padding-left: 22px; line-height: 1.6; }
 .how-to code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
 .setting-status { color: var(--text); font-size: 13px; margin: 0; padding: 8px 10px; background: var(--success); border-radius: 8px; }
+.setting-status.error { background: var(--danger); color: white; }
+
+.ha-banner {
+  position: fixed;
+  top: calc(var(--safe-top) + 56px);
+  left: 0; right: 0;
+  z-index: 4;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: #f59e0b;
+  color: #1f1300;
+  font-size: 13px;
+  line-height: 1.3;
+  border-bottom: 1px solid rgba(0,0,0,0.18);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.ha-banner-text { flex: 1; min-width: 0; }
+.ha-banner-cta {
+  background: #1f1300; color: #ffd166;
+  padding: 6px 12px; border-radius: 999px;
+  font-weight: 600; font-size: 12px; white-space: nowrap;
+}
+body.has-ha-banner #thread { padding-top: calc(var(--topbar-h, 60px) + 58px); }
 button.primary { background: var(--accent); color: white; padding: 10px 16px; border-radius: 10px; font-weight: 600; }
 
 #ha-mcp-consent {

@@ -279,6 +279,42 @@ def _ha_request(url: str, token: str, *, method: str = "GET",
             return raw.decode("utf-8", errors="replace")
 
 
+class HaTestBody(BaseModel):
+    # Both optional — empty values fall back to saved settings, so the client
+    # can validate just-typed credentials without first persisting them.
+    url: str | None = None
+    token: str | None = None
+
+
+@app.post("/api/ha/test_token")
+async def test_ha_token(body: HaTestBody) -> dict[str, Any]:
+    """Validate an HA (url, token) pair by GET-ing /api/.
+
+    Returns {ok: true} on success, or {ok: false, error: "..."} with a
+    short human-readable reason. Never raises — the client treats this as
+    informational, not blocking."""
+    s = load_settings()
+    url = (body.url if body.url is not None else s.get("ha_url") or "").strip().rstrip("/")
+    token = (body.token or "").strip() or (s.get("ha_token") or "").strip()
+    if not url:
+        return {"ok": False, "error": "Home Assistant URL is empty."}
+    if not token:
+        return {"ok": False, "error": "No Long-Lived Access Token saved."}
+    import urllib.error
+    try:
+        await asyncio.to_thread(_ha_request, f"{url}/api/", token, timeout=5.0)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return {"ok": False, "error": "Token rejected (401). Generate a new Long-Lived Access Token in your HA profile."}
+        return {"ok": False, "error": f"HA returned HTTP {e.code}."}
+    except urllib.error.URLError as e:
+        reason = getattr(e, "reason", e)
+        return {"ok": False, "error": f"Couldn't reach HA: {reason}"}
+    except Exception as e:
+        return {"ok": False, "error": f"Validation failed: {e}"}
+    return {"ok": True}
+
+
 @app.get("/api/ha/notify_targets")
 async def list_notify_targets() -> list[dict[str, str]]:
     """List every notify.mobile_app_* service the configured HA knows about.
