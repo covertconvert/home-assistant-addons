@@ -189,6 +189,15 @@ class Session:
         existing = session_jsonl_path(self.id).exists()
         mcp_config = write_mcp_config_if_enabled()
         notes_path = projects_store.notes_path_for_project(self.project_id) if self.project_id else None
+        notes_text = ""
+        if notes_path:
+            try:
+                notes_text = notes_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                notes_text = ""
+        combined_prompt = (
+            f"{CCM_NUDGE_PROMPT}\n\n{notes_text}" if notes_text else CCM_NUDGE_PROMPT
+        )
         cmd = [
             CLAUDE_BIN,
             "--output-format", "stream-json",
@@ -197,8 +206,7 @@ class Session:
             *(["--mcp-config", str(mcp_config)] if mcp_config else []),
             *(["--model", self.model] if self.model else []),
             *(["--permission-mode", "plan"] if self.permission_mode == "plan" else []),
-            "--append-system-prompt", CCM_NUDGE_PROMPT,
-            *(["--append-system-prompt-file", str(notes_path)] if notes_path else []),
+            "--append-system-prompt", combined_prompt,
             "--verbose",
         ]
         env = {**os.environ, "FORCE_COLOR": "0"}
