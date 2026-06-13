@@ -1282,7 +1282,7 @@ async function saveSettings() {
       }),
     });
     settingsEls.status.hidden = false;
-    settingsEls.status.textContent = 'Saved. Restart any active chat (new conversation, or delete + reopen) to apply.';
+    settingsEls.status.textContent = 'Saved. Start a new chat (or use \u201cSummarize & start fresh\u201d on an existing one) to apply.';
   } catch (e) {
     settingsEls.status.hidden = false;
     settingsEls.status.textContent = `Save failed: ${e.message}`;
