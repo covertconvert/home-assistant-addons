@@ -1722,7 +1722,16 @@ async function bootApp() {
     app.style.height = h + 'px';
   };
 
-  if (fe && pvv) {
+  // The iframe-reposition trick is iOS-only. On desktop Safari/Chrome the HA
+  // sidebar overlays the first ~250px of the window, and pinning the iframe
+  // to `left: 0` of the parent viewport hides the chat behind the sidebar.
+  // iPadOS reports as MacIntel with maxTouchPoints>1, so check both UA and
+  // touch capability.
+  const isIOS =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  if (fe && pvv && isIOS) {
     fe.style.position = 'fixed';
     fe.style.left = '0';
     fe.style.right = '0';
