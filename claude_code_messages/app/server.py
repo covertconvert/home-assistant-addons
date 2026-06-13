@@ -329,44 +329,43 @@ def _last_assistant_preview(sess: Session, max_len: int = 140) -> str:
     return ""
 
 
-# Discovered once at startup via supervisor API. Repository addons get a
-# hash-prefixed slug (e.g. d8a78ace_claude_code_messages); the bare slug
-# from config.yaml does not match what HA's ingress router serves, so
-# deep-linking with the bare slug returns 401.
-_addon_slug_cache: str | None = None
+# Panel URL that HA's frontend uses to open this addon's iframe — reported
+# by the frontend on load via /api/panel_url because (a) repository addons
+# get a hash-prefixed slug not knowable from config.yaml, and (b) the panel
+# URL format itself can vary across HA versions. Frontend reads
+# `window.parent.location.pathname` and POSTs it here; backend uses
+# whatever HA actually uses to navigate to the addon.
+_panel_url_cache: str | None = None
 
 
-def _discover_addon_slug() -> str | None:
-    """Ask supervisor what slug this addon is actually installed under.
-    Returns None on any failure — caller falls back to the bare slug.
-    Requires `hassio_api: true` in config.yaml; SUPERVISOR_TOKEN env var
-    is always set by the supervisor for addons."""
-    import json as _json
-    import urllib.request
-    token = os.environ.get("SUPERVISOR_TOKEN")
-    if not token:
-        return None
-    req = urllib.request.Request(
-        "http://supervisor/addons/self/info",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=5.0) as resp:
-            data = _json.loads(resp.read().decode("utf-8"))
-        slug = (data.get("data") or data).get("slug")
-        return slug if isinstance(slug, str) and slug else None
-    except Exception:
-        return None
+class PanelUrlBody(BaseModel):
+    path: str
+
+
+@app.post("/api/panel_url")
+async def report_panel_url(body: PanelUrlBody) -> dict[str, bool]:
+    """Frontend reports the HA panel URL it's loaded inside. We cache the
+    path (without query/hash) so notification deep-links open the same
+    panel rather than a 401/404'ing slug-based guess."""
+    global _panel_url_cache
+    path = (body.path or "").strip()
+    if not path.startswith("/"):
+        return {"ok": False}
+    # Strip query/hash; we append our own ?session=… per notification.
+    for sep in ("?", "#"):
+        i = path.find(sep)
+        if i != -1:
+            path = path[:i]
+    _panel_url_cache = path
+    return {"ok": True}
 
 
 def _session_deep_link(session_id: str) -> str:
-    """URL the mobile_app should open on notification tap. Uses the
-    supervisor-discovered slug so the ingress router can resolve the
-    panel session — bare slug 401s for repository-installed addons."""
-    global _addon_slug_cache
-    if _addon_slug_cache is None:
-        _addon_slug_cache = _discover_addon_slug() or "claude_code_messages"
-    return f"/hassio/ingress/{_addon_slug_cache}?session={session_id}"
+    """URL the mobile_app should open on notification tap. Prefers the
+    panel URL the frontend reported (matches whatever HA actually serves);
+    falls back to a slug-based guess if no frontend has connected yet."""
+    base = _panel_url_cache or "/hassio/ingress/claude_code_messages"
+    return f"{base}?session={session_id}"
 
 
 async def _send_notification(payload: dict[str, Any]) -> dict[str, Any]:

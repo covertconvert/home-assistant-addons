@@ -1683,6 +1683,21 @@ async function bootApp() {
     fe = null; pvv = null;
   }
 
+  // Report the HA panel URL we're loaded inside so the backend can use it
+  // as the base for notification deep-links. HA serves the addon panel at
+  // a URL that depends on its (possibly hash-prefixed) slug; guessing from
+  // config.yaml 401s / 404s. The frontend already knows the right path.
+  try {
+    if (window.parent && window.parent.location && window.parent.location.pathname) {
+      const path = window.parent.location.pathname;
+      fetch('api/panel_url', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path}),
+      }).catch(() => {});
+    }
+  } catch (_) { /* cross-origin block — backend falls back to slug guess */ }
+
   // Keyboard-up detection: when iOS shows the keyboard, the visible viewport
   // shrinks but env(safe-area-inset-bottom) keeps reporting ~34px for the
   // home indicator. That inset is meaningless when the composer sits above
