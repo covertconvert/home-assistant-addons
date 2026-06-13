@@ -34,7 +34,7 @@ const els = {
   drawerBody: $('#drawer-body'),
   drawerSearch: $('#drawer-search'),
   drawerSearchClear: $('#drawer-search-clear'),
-  newProject: $('#new-project'),
+  newSessionMore: $('#new-session-more'),
   newSession: $('#new-session'),
   newSessionDrawer: $('#new-session-drawer'),
   composerPlus: $('#composer-plus'),
@@ -1072,7 +1072,12 @@ els.drawerSearchClear.addEventListener('click', clearSearch);
 els.drawer.addEventListener('click', (e) => { if (e.target === els.drawer) closeDrawer(); });
 els.newSession.addEventListener('click', () => createSession(null));
 els.newSessionDrawer.addEventListener('click', () => { createSession(null); closeDrawer(); });
-els.newProject.addEventListener('click', createProject);
+els.newSessionMore.addEventListener('click', (e) => {
+  e.stopPropagation();
+  openMenu(els.newSessionMore, [
+    { label: 'New project', action: createProject },
+  ]);
+});
 function renderModeToggle(mode) {
   els.cpPlan.dataset.mode = mode;
   els.cpPlan.classList.toggle('active', mode === 'plan');

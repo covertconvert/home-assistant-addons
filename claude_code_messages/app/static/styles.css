@@ -182,15 +182,15 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
 #topbar .new-chat-btn { min-width: auto; min-height: 32px; font-size: 13px; }
 
 /* Split button: New Chat (main) | ⌄ (caret menu) sharing a single pill. */
-#topbar .split-btn {
+.split-btn {
   display: inline-flex; align-items: stretch;
   background: var(--accent); border-radius: 8px; overflow: hidden;
   min-height: 32px;
 }
-#topbar .split-btn .split-main {
+.split-btn .split-main {
   border-radius: 0; padding: 6px 8px 6px 10px;
 }
-#topbar .split-btn .split-caret {
+.split-btn .split-caret {
   border-radius: 0;
   padding: 0 4px;
   min-width: 22px; min-height: 32px;
@@ -198,7 +198,7 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
   display: inline-flex; align-items: center; justify-content: center;
   border-left: 1px solid rgba(255,255,255,0.28);
 }
-#topbar .split-btn .split-caret:active { background: rgba(0,0,0,0.18); }
+.split-btn .split-caret:active { background: rgba(0,0,0,0.18); }
 #settings-toggle {
   background: transparent; padding: 4px; min-width: 32px; min-height: 32px;
   display: inline-flex; align-items: center; justify-content: center;

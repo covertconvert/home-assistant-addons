@@ -55,8 +55,14 @@
   <aside id="drawer" hidden>
     <div class="drawer-head">
       <span>Conversations</span>
-      <button id="new-session-drawer" class="new-chat-btn" aria-label="New chat">New Chat</button>
-      <button id="new-project" class="new-project-btn" aria-label="New project">New Project</button>
+      <div class="split-btn">
+        <button id="new-session-drawer" class="new-chat-btn split-main" aria-label="New chat">New Chat</button>
+        <button id="new-session-more" class="split-caret" aria-label="More create options" aria-haspopup="menu">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+      </div>
       <button id="settings-toggle" aria-label="Settings" title="Settings">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="3"></circle>
