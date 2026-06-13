@@ -389,7 +389,7 @@ button.danger:active { background: color-mix(in srgb, var(--danger) 20%, transpa
   box-shadow: inset 0 0 0 1px #c5a3ff88;
 }
 #composer-panel {
-  display: grid; grid-template-columns: repeat(2, 1fr);
+  display: grid; grid-template-columns: repeat(3, 1fr);
   gap: 6px; padding: 6px 0 2px;
 }
 #composer-panel[hidden] { display: none; }

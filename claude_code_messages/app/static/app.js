@@ -41,6 +41,8 @@ const els = {
   composerPanel: $('#composer-panel'),
   cpPhotos: $('#cp-photos'),
   cpPlan: $('#cp-plan'),
+  cpModel: $('#cp-model'),
+  cpModelLabel: $('#cp-model .cp-label'),
   actionMenu: $('#action-menu'),
 };
 
@@ -238,6 +240,7 @@ function selectSession(id) {
   const sess = state.sessions.find(s => s.id === id);
   els.title.textContent = sess?.title || 'Conversation';
   renderModeToggle(sess?.permission_mode || 'default');
+  renderModelTile();
   closeDrawer();
   if (state.es) state.es.close();
   state.es = new EventSource(`api/sessions/${id}/stream`);
@@ -1030,6 +1033,17 @@ els.cpPhotos.addEventListener('click', () => {
 els.cpPlan.addEventListener('click', () => {
   setPermissionMode(currentMode() === 'plan' ? 'default' : 'plan');
 });
+els.cpModel.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!state.sessionId) return;
+  const sess = state.sessions.find(x => x.id === state.sessionId) || {};
+  const cur = sess.model || null;
+  const items = MODELS.map(m => ({
+    label: (cur === m.id ? '\u2713 ' : '') + m.label,
+    action: () => setSessionModel(m.id),
+  }));
+  openMenu(els.cpModel, items);
+});
 
 els.drawerToggle.addEventListener('click', openDrawer);
 els.drawerClose.addEventListener('click', closeDrawer);
@@ -1043,6 +1057,20 @@ function renderModeToggle(mode) {
   els.cpPlan.dataset.mode = mode;
   els.cpPlan.classList.toggle('active', mode === 'plan');
   els.input.classList.toggle('plan-mode', mode === 'plan');
+}
+
+function renderModelTile() {
+  if (!els.cpModelLabel) return;
+  if (!state.sessionId) {
+    els.cpModelLabel.textContent = 'Model';
+    els.cpModel.classList.remove('active');
+    return;
+  }
+  const sess = state.sessions.find(x => x.id === state.sessionId) || {};
+  const cur = sess.model || null;
+  const label = (MODELS.find(m => m.id === cur) || MODELS[0]).label;
+  els.cpModelLabel.textContent = label;
+  els.cpModel.classList.toggle('active', cur != null);
 }
 
 function currentMode() {
@@ -1618,6 +1646,7 @@ async function setSessionModel(modelId) {
     appendSystem(`Model set to ${label}. Takes effect on the next message.`);
     const s = state.sessions.find(x => x.id === state.sessionId);
     if (s) s.model = modelId;
+    renderModelTile();
   } catch (err) {
     appendSystem(`Set model failed: ${err.message}`);
   }
@@ -1638,25 +1667,12 @@ async function summarizeFresh() {
 
 chatActionsBtn.addEventListener('click', (e) => {
   e.stopPropagation();
-  const items = [{ label: 'Usage', action: openCost }];
+  const items = [];
   if (state.sessionId) {
-    const sess = state.sessions.find(x => x.id === state.sessionId) || {};
-    const cur = sess.model || null;
-    const curMode = sess.permission_mode || 'default';
-    items.push({
-      label: curMode === 'plan' ? '\u2713 Plan mode' : 'Plan mode',
-      action: () => setPermissionMode(curMode === 'plan' ? 'default' : 'plan'),
-    });
-    items.push({
-      label: 'Switch model',
-      submenu: MODELS.map(m => ({
-        label: (cur === m.id ? '\u2713 ' : '') + m.label,
-        action: () => setSessionModel(m.id),
-      })),
-    });
     items.push({ label: 'Summarize & start fresh', action: summarizeFresh });
     items.push({ label: 'Clear context', danger: true, action: clearContext });
   }
+  if (!items.length) return;
   openMenu(chatActionsBtn, items);
 });
 costEls.close.addEventListener('click', () => { costEls.panel.hidden = true; });
