@@ -71,8 +71,8 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
 #app { display: grid; grid-template-rows: 1fr auto; height: 100dvh; }
 
 #topbar {
-  display: flex; align-items: center; gap: 12px;
-  padding: calc(var(--safe-top) + 10px) 14px 10px;
+  display: flex; align-items: center; gap: 6px;
+  padding: calc(var(--safe-top) + 10px) 10px 10px;
   background: color-mix(in srgb, var(--panel) 75%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
   position: fixed; top: 0; left: 0; right: 0; z-index: 5;
@@ -188,12 +188,12 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
   min-height: 32px;
 }
 #topbar .split-btn .split-main {
-  border-radius: 0; padding: 6px 10px 6px 12px;
+  border-radius: 0; padding: 6px 8px 6px 10px;
 }
 #topbar .split-btn .split-caret {
   border-radius: 0;
-  padding: 0 8px;
-  min-width: 28px; min-height: 32px;
+  padding: 0 4px;
+  min-width: 22px; min-height: 32px;
   color: white;
   display: inline-flex; align-items: center; justify-content: center;
   border-left: 1px solid rgba(255,255,255,0.28);
