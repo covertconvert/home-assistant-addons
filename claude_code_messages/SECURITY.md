@@ -2,7 +2,7 @@
 
 The app enforces a layered defense: hard rules (code-enforced, can't be bypassed by toggling settings), user-controllable prompts (you decide per-action), and soft rules (guide Claude's behaviour but not enforced). Underneath all of it sits one floor that matters more than any rule: a working Home Assistant backup.
 
-**Last reviewed: 2026-06-13 (v0.1.73)**
+**Last reviewed: 2026-06-13 (v1.0.0)**
 
 -----
 
