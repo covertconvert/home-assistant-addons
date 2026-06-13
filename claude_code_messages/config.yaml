@@ -1,5 +1,5 @@
 name: Claude Code Messages
-version: "0.1.59"
+version: "0.1.60"
 slug: claude_code_messages
 description: Graphical chat interface for the Claude Code CLI, designed for the HA companion app
 arch:
@@ -9,7 +9,7 @@ arch:
 init: false
 startup: services
 boot: auto
-hassio_api: false
+hassio_api: true
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:forum
