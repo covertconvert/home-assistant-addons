@@ -42,8 +42,14 @@
                 transform="rotate(-90 18 18)"/>
       </svg>
     </button>
-    <button id="chat-actions" aria-label="Chat actions">&#8943;</button>
-    <button id="new-session" class="new-chat-btn" aria-label="New chat">New Chat</button>
+    <div class="split-btn">
+      <button id="new-session" class="new-chat-btn split-main" aria-label="New chat">New Chat</button>
+      <button id="chat-actions" class="split-caret" aria-label="Chat actions" aria-haspopup="menu">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+    </div>
   </header>
 
   <aside id="drawer" hidden>
