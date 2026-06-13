@@ -44,7 +44,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_MB = 10
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Claude Code Messages", version="0.2.0")
+app = FastAPI(title="Claude Code Messages", version="0.1.0")
 manager = SessionManager(max_sessions=int(os.environ.get("MAX_SESSIONS", "20")))
 auth_flow: AuthFlow | None = None
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
