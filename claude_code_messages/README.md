@@ -18,6 +18,13 @@ The existing terminal-based Claude apps work, but they're rough on mobile:
 
 This app wraps the same `claude` CLI but gives it a proper chat UI: bubbles, code blocks with copy buttons, image attachments, explicit Stop button, and inline approve/reject cards for permission prompts.
 
+## Screenshots
+
+| Drawer | Chat with tools | Automation prompt |
+|---|---|---|
+| ![Drawer](screenshots/drawer.jpeg) | ![Chat with tools](screenshots/chat-with-tools.jpeg) | ![Automation prompt](screenshots/automation-prompt.jpeg) |
+| Sessions grouped under projects with created-date subtitles | A turn that calls Bash and an MCP tool, with inline permission cards | Asking Claude to add a motion-triggered automation |
+
 ## Requirements
 
 **Required**

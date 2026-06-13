@@ -31,6 +31,12 @@ Claude Code Messages wraps the same `claude` CLI but exposes it as a real chat U
 
 All of this from your phone, on the way to bed.
 
+### Screenshots
+
+| Drawer | Chat with tools | Automation prompt |
+|---|---|---|
+| ![Drawer](claude_code_messages/screenshots/drawer.jpeg) | ![Chat with tools](claude_code_messages/screenshots/chat-with-tools.jpeg) | ![Automation prompt](claude_code_messages/screenshots/automation-prompt.jpeg) |
+
 ### Features
 
 - **OAuth login** with your Claude account — no API key needed; your existing Claude subscription (Pro / Max / Team) is what's charged
