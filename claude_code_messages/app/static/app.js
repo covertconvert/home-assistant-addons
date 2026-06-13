@@ -821,7 +821,8 @@ function clearSearch() {
 function renderGroup(projectId, name, sessions) {
   const group = document.createElement('section');
   group.className = 'project-group';
-  const collapsed = projectId !== null && state.collapsedProjects.has(projectId);
+  const collapseKey = projectId === null ? '__unsorted__' : projectId;
+  const collapsed = state.collapsedProjects.has(collapseKey);
   if (collapsed) group.classList.add('collapsed');
 
   const header = document.createElement('header');
@@ -858,9 +859,8 @@ function renderGroup(projectId, name, sessions) {
     header.append(menuBtn);
   }
   header.addEventListener('click', () => {
-    if (projectId === null) return;
-    if (state.collapsedProjects.has(projectId)) state.collapsedProjects.delete(projectId);
-    else state.collapsedProjects.add(projectId);
+    if (state.collapsedProjects.has(collapseKey)) state.collapsedProjects.delete(collapseKey);
+    else state.collapsedProjects.add(collapseKey);
     persistCollapsedProjects();
     renderDrawer();
   });
