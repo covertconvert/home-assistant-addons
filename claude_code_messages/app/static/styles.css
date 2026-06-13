@@ -496,6 +496,30 @@ button.danger:active { background: color-mix(in srgb, var(--danger) 20%, transpa
   font-weight: 600; font-size: 12px; white-space: nowrap;
 }
 body.has-ha-banner #thread { padding-top: calc(var(--topbar-h, 60px) + 58px); }
+
+/* Usage banner stacks below HA banner if both are shown. */
+.usage-banner { background: #ef4444; color: #fff; }
+.usage-banner .ha-banner-cta { background: #ffffff; color: #b91c1c; }
+body.has-usage-banner #usage-banner { top: calc(var(--safe-top) + 56px); }
+body.has-ha-banner.has-usage-banner #usage-banner { top: calc(var(--safe-top) + 56px + 46px); }
+body.has-usage-banner #thread { padding-top: calc(var(--topbar-h, 60px) + 58px); }
+body.has-ha-banner.has-usage-banner #thread { padding-top: calc(var(--topbar-h, 60px) + 58px + 46px); }
+
+/* Usage meter icons in the topbar. */
+.usage-meter {
+  min-width: 36px; min-height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-dim);
+  padding: 0;
+}
+.usage-meter.warn { color: #f59e0b; }
+.usage-meter.danger { color: #ef4444; }
+.usage-meter svg { display: block; }
+.usage-meter .ring-fill,
+.usage-meter .gauge-fill,
+.usage-meter .gauge-needle {
+  transition: stroke-dasharray 0.4s ease, transform 0.4s ease;
+}
 button.primary { background: var(--accent); color: white; padding: 10px 16px; border-radius: 10px; font-weight: 600; }
 
 #ha-mcp-consent {

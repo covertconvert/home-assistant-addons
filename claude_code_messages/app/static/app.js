@@ -645,6 +645,7 @@ function setGenerating(on, startedAt) {
     indicator.hidden = true;
     clearInterval(state.typingTimer);
     state.typingTimer = null;
+    refreshUsage();
   }
 }
 
@@ -1362,6 +1363,78 @@ async function updateHaBanner() {
   }
 }
 
+// --- Usage meter + 5h-window banner --------------------------------------
+
+const usageEls = {
+  ringBtn: document.getElementById('usage-ring-btn'),
+  gaugeBtn: document.getElementById('usage-gauge-btn'),
+  banner: document.getElementById('usage-banner'),
+};
+const usageBannerTextEl = usageEls.banner ? usageEls.banner.querySelector('.ha-banner-text') : null;
+const usageBannerCtaEl = usageEls.banner ? usageEls.banner.querySelector('.ha-banner-cta') : null;
+if (usageEls.ringBtn) usageEls.ringBtn.addEventListener('click', () => openCost());
+if (usageEls.gaugeBtn) usageEls.gaugeBtn.addEventListener('click', () => openCost());
+if (usageBannerCtaEl) usageBannerCtaEl.addEventListener('click', () => openCost());
+
+function setMeterTone(el, p) {
+  if (!el) return;
+  el.classList.toggle('warn', p != null && p >= 70 && p < 90);
+  el.classList.toggle('danger', p != null && p >= 90);
+}
+
+function updateUsageIcons(pct) {
+  const p100 = pct == null ? 0 : Math.max(0, Math.min(100, Math.round(pct * 100)));
+  const ring = usageEls.ringBtn;
+  if (ring) {
+    const fill = ring.querySelector('.ring-fill');
+    if (fill) fill.setAttribute('stroke-dasharray', `${p100} 100`);
+    setMeterTone(ring, pct == null ? null : p100);
+  }
+  const gauge = usageEls.gaugeBtn;
+  if (gauge) {
+    const fill = gauge.querySelector('.gauge-fill');
+    if (fill) fill.setAttribute('stroke-dasharray', `${p100} 100`);
+    const needle = gauge.querySelector('.gauge-needle');
+    if (needle) needle.setAttribute('transform', `rotate(${(p100 / 100) * 180} 18 22)`);
+    setMeterTone(gauge, pct == null ? null : p100);
+  }
+}
+
+function setUsageBanner(text) {
+  if (!usageEls.banner) return;
+  if (text) {
+    if (usageBannerTextEl) usageBannerTextEl.textContent = text;
+    usageEls.banner.hidden = false;
+    document.body.classList.add('has-usage-banner');
+  } else {
+    usageEls.banner.hidden = true;
+    document.body.classList.remove('has-usage-banner');
+  }
+}
+
+let _usageLastFetch = 0;
+const USAGE_THROTTLE_MS = 5 * 60 * 1000;
+async function refreshUsage(force = false) {
+  const now = Date.now();
+  if (!force && now - _usageLastFetch < USAGE_THROTTLE_MS) return;
+  _usageLastFetch = now;
+  try {
+    const u = await api('api/usage');
+    updateUsageIcons(u.five_hour_pct);
+    const p = u.five_hour_pct == null ? 0 : Math.round(u.five_hour_pct * 100);
+    if (p >= 90) {
+      const when = u.five_hour_reset
+        ? fmtUntil(u.five_hour_reset).replace(/^Resets /, 'resets ')
+        : 'resets soon';
+      setUsageBanner(`${p}% of your 5-hour Claude quota used — ${when}.`);
+    } else {
+      setUsageBanner(null);
+    }
+  } catch {
+    // Silent: usage check failed, leave icons in last-known state.
+  }
+}
+
 async function saveSettings() {
   settingsEls.saveBtn.disabled = true;
   settingsEls.saveBtn.textContent = 'Saving…';
@@ -1765,6 +1838,7 @@ async function bootApp() {
   authEls.app.hidden = false;
   await loadAll();
   updateHaBanner();
+  refreshUsage(true);
   // Deep-link from notification tap: ?session=<id> drops the user straight
   // into the right chat. Falls back to most-recent if the id is unknown.
   let target = null;
