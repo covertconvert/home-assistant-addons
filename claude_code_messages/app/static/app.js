@@ -1014,6 +1014,7 @@ els.fileInput.addEventListener('change', () => {
 function setPanelOpen(open) {
   els.composerPanel.hidden = !open;
   els.composerPlus.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (!open) setComposerView('main');
 }
 els.composerPlus.addEventListener('click', () => {
   const isOpen = !els.composerPanel.hidden;
@@ -1036,14 +1037,33 @@ els.cpPlan.addEventListener('click', () => {
 els.cpModel.addEventListener('click', (e) => {
   e.stopPropagation();
   if (!state.sessionId) return;
+  setComposerView('models');
+});
+document.querySelectorAll('.cp-model-pick').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const raw = btn.getAttribute('data-model') || '';
+    setSessionModel(raw || null);
+    setComposerView('main');
+  });
+});
+
+function setComposerView(view) {
+  els.composerPanel.dataset.view = view;
+  const main = els.composerPanel.querySelector('.cp-view-main');
+  const models = els.composerPanel.querySelector('.cp-view-models');
+  if (main) main.hidden = view !== 'main';
+  if (models) models.hidden = view !== 'models';
+  if (view === 'models') renderModelPicks();
+}
+
+function renderModelPicks() {
   const sess = state.sessions.find(x => x.id === state.sessionId) || {};
   const cur = sess.model || null;
-  const items = MODELS.map(m => ({
-    label: (cur === m.id ? '\u2713 ' : '') + m.label,
-    action: () => setSessionModel(m.id),
-  }));
-  openMenu(els.cpModel, items);
-});
+  document.querySelectorAll('.cp-model-pick').forEach((btn) => {
+    const id = btn.getAttribute('data-model') || null;
+    btn.classList.toggle('active', (id || null) === (cur || null));
+  });
+}
 
 els.drawerToggle.addEventListener('click', openDrawer);
 els.drawerClose.addEventListener('click', closeDrawer);

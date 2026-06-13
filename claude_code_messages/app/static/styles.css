@@ -388,10 +388,13 @@ button.danger:active { background: color-mix(in srgb, var(--danger) 20%, transpa
 #input.plan-mode {
   box-shadow: inset 0 0 0 1px #c5a3ff88;
 }
-#composer-panel {
-  display: grid; grid-template-columns: repeat(3, 1fr);
-  gap: 6px; padding: 6px 0 2px;
-}
+#composer-panel { padding: 6px 0 2px; }
+#composer-panel .cp-view { display: grid; gap: 6px; }
+#composer-panel .cp-view-main { grid-template-columns: repeat(3, 1fr); }
+#composer-panel .cp-view-models { grid-template-columns: repeat(4, 1fr); }
+#composer-panel .cp-view[hidden] { display: none; }
+#composer button.cp-model-pick { padding: 14px 4px; min-height: 56px; }
+#composer button.cp-model-pick .cp-label { font-size: 12px; }
 #composer-panel[hidden] { display: none; }
 /* Override `#composer button` defaults (30x30 circle) — these are tiles. */
 #composer button.cp-option {
