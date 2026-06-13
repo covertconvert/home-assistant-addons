@@ -873,14 +873,41 @@ function renderGroup(projectId, name, sessions) {
   return group;
 }
 
+function formatSessionDate(timestamp) {
+  if (!timestamp) return '';
+  const d = new Date(timestamp * 1000);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(d);
+  target.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((today - target) / 86400000);
+  if (diffDays <= 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return d.toLocaleDateString('en-GB', { weekday: 'long' });
+  if (d.getFullYear() === today.getFullYear()) {
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  }
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 function renderSessionRow(s) {
   const li = document.createElement('li');
   if (s.id === state.sessionId) li.classList.add('active');
+  const text = document.createElement('div');
+  text.className = 'session-text';
   const title = document.createElement('span');
   title.className = 'session-title';
   title.textContent = s.title || 'Untitled';
-  title.addEventListener('click', () => selectSession(s.id));
-  li.appendChild(title);
+  text.appendChild(title);
+  const dateStr = formatSessionDate(s.created_at);
+  if (dateStr) {
+    const date = document.createElement('span');
+    date.className = 'session-date';
+    date.textContent = dateStr;
+    text.appendChild(date);
+  }
+  text.addEventListener('click', () => selectSession(s.id));
+  li.appendChild(text);
 
   const menuBtn = document.createElement('button');
   menuBtn.className = 'row-menu';
