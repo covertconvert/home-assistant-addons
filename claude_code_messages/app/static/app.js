@@ -931,9 +931,17 @@ function openMenu(trigger, items) {
     menu.appendChild(btn);
   }
   const rect = trigger.getBoundingClientRect();
-  menu.style.top = `${rect.bottom + 4}px`;
   menu.style.right = `${window.innerWidth - rect.right}px`;
+  menu.style.top = '0px';
+  menu.style.visibility = 'hidden';
   menu.hidden = false;
+  const menuHeight = menu.offsetHeight;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const flipUp = spaceBelow < menuHeight + 8;
+  menu.style.top = flipUp
+    ? `${Math.max(8, rect.top - menuHeight - 4)}px`
+    : `${rect.bottom + 4}px`;
+  menu.style.visibility = '';
   setTimeout(() => document.addEventListener('click', closeMenu, { once: true }), 0);
 }
 
