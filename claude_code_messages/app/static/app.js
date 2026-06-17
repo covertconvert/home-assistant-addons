@@ -8,6 +8,7 @@ const state = {
   sessionId: null,
   sessions: [],
   projects: [],
+  plans: [],
   collapsedProjects: new Set(JSON.parse(localStorage.getItem('collapsedProjects') || '[]')),
   attachments: [], // [{path, name, dataUrl}]
   es: null,
@@ -16,6 +17,12 @@ const state = {
   turnTokens: 0,
   typingTimer: null,
   turnActivity: null, // {verb, target} — what Claude is currently doing
+  didCompact: false,  // compaction happened this turn — show banner on generation_ended
+  thinkingEl: null,   // live thinking bubble currently streaming (or null)
+  thinkingStart: 0,   // ms timestamp the current thinking phase began
+  thinkingTokens: 0,  // current thinking block's live estimate (resets per block)
+  thinkingBase: 0,    // sum of completed thinking blocks this turn (so the live count climbs across bursts)
+  tokensShownMax: 0,  // per-turn high-water mark so the live token count never ticks down
   searchQuery: '',
   searchResults: null, // null = inactive; array = active (possibly empty)
 };
@@ -41,8 +48,6 @@ const els = {
   composerPanel: $('#composer-panel'),
   cpPhotos: $('#cp-photos'),
   cpPlan: $('#cp-plan'),
-  cpModel: $('#cp-model'),
-  cpModelLabel: $('#cp-model .cp-label'),
   actionMenu: $('#action-menu'),
 };
 
@@ -119,12 +124,14 @@ async function api(path, opts = {}) {
 }
 
 async function loadAll() {
-  const [sessions, projects] = await Promise.all([
+  const [sessions, projects, plans] = await Promise.all([
     api('api/sessions'),
     api('api/projects'),
+    api('api/plans'),
   ]);
   state.sessions = sessions;
   state.projects = projects;
+  state.plans = plans;
   renderDrawer();
 }
 
@@ -149,6 +156,7 @@ async function deleteSession(id) {
     state.sessionId = null;
     els.thread.innerHTML = '';
     els.title.textContent = 'New conversation';
+    els.title.classList.remove('editable');
     if (state.es) { state.es.close(); state.es = null; }
     setGenerating(false);
   }
@@ -191,12 +199,191 @@ async function renameProject(id, name) {
   renderDrawer();
 }
 
+async function reorderProject(id, direction) {
+  const idx = state.projects.findIndex(p => p.id === id);
+  const swapIdx = idx + direction;
+  if (idx === -1 || swapIdx < 0 || swapIdx >= state.projects.length) return;
+  [state.projects[idx], state.projects[swapIdx]] = [state.projects[swapIdx], state.projects[idx]];
+  renderDrawer();
+  await api('api/projects/reorder', { method: 'POST', body: JSON.stringify({ ids: state.projects.map(p => p.id) }) });
+}
+
 async function deleteProject(id) {
   await api(`api/projects/${id}`, { method: 'DELETE' });
   state.projects = state.projects.filter(p => p.id !== id);
   for (const s of state.sessions) if (s.project_id === id) s.project_id = null;
   renderDrawer();
 }
+
+// --- Saved plans ---------------------------------------------------------
+
+async function savePlan(name, content) {
+  const record = await api('api/plans', {
+    method: 'POST',
+    body: JSON.stringify({ name, content }),
+  });
+  state.plans.push(record);
+  renderDrawer();
+  return record;
+}
+
+async function deletePlan(planId) {
+  await api(`api/plans/${planId}`, { method: 'DELETE' });
+  state.plans = state.plans.filter(p => p.id !== planId);
+  renderDrawer();
+}
+
+async function loadPlanIntoNewChat(planId) {
+  const s = await api(`api/plans/${planId}/load`, { method: 'POST' });
+  state.sessions.unshift({
+    id: s.id,
+    title: s.title || 'New conversation',
+    project_id: s.project_id ?? null,
+    permission_mode: 'plan',
+    last_activity: Date.now() / 1000,
+  });
+  closeDrawer();
+  closePlanViewModal();
+  selectSession(s.id);
+}
+
+// --- Saved-plan modals ---------------------------------------------------
+
+let _planViewId = null;
+
+function openPlanViewModal(plan) {
+  _planViewId = plan.id;
+  document.getElementById('plan-view-title').textContent = plan.name;
+  const content = document.getElementById('plan-view-content');
+  content.innerHTML = renderMarkdown(plan.content || '');
+  document.getElementById('plan-view-modal').hidden = false;
+}
+
+function closePlanViewModal() {
+  document.getElementById('plan-view-modal').hidden = true;
+  _planViewId = null;
+}
+
+document.getElementById('plan-view-close').addEventListener('click', closePlanViewModal);
+document.getElementById('plan-view-modal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('plan-view-modal')) closePlanViewModal();
+});
+document.getElementById('plan-view-load').addEventListener('click', async () => {
+  if (!_planViewId) return;
+  const btn = document.getElementById('plan-view-load');
+  btn.disabled = true;
+  btn.textContent = 'Opening…';
+  try {
+    await loadPlanIntoNewChat(_planViewId);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Load into new chat';
+    appendSystem(`Load plan failed: ${err.message}`);
+  }
+});
+
+// Plan-name modal (prompt for name before saving)
+let _pendingPlanContent = null;
+let _pendingPlanCallback = null;
+
+function openPlanNameModal(content, onSaved) {
+  _pendingPlanContent = content;
+  _pendingPlanCallback = onSaved || null;
+  const input = document.getElementById('plan-name-input');
+  input.value = '';
+  document.getElementById('plan-name-status').hidden = true;
+  document.getElementById('plan-name-modal').hidden = false;
+  setTimeout(() => input.focus(), 50);
+}
+
+function closePlanNameModal() {
+  document.getElementById('plan-name-modal').hidden = true;
+  _pendingPlanContent = null;
+  _pendingPlanCallback = null;
+}
+
+async function confirmSavePlan() {
+  const name = document.getElementById('plan-name-input').value.trim();
+  if (!name) {
+    document.getElementById('plan-name-input').focus();
+    return;
+  }
+  const content = _pendingPlanContent;
+  if (content === null || content === undefined) return;
+  const saveBtn = document.getElementById('plan-name-save');
+  const status = document.getElementById('plan-name-status');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving…';
+  try {
+    await savePlan(name, content);
+    const cb = _pendingPlanCallback;
+    closePlanNameModal();
+    appendSystem(`Plan "${name}" saved — find it in the drawer.`);
+    if (cb) cb();
+  } catch (err) {
+    status.hidden = false;
+    status.textContent = `Save failed: ${err.message}`;
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save';
+  }
+}
+
+document.getElementById('plan-name-close').addEventListener('click', closePlanNameModal);
+document.getElementById('plan-name-modal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('plan-name-modal')) closePlanNameModal();
+});
+document.getElementById('plan-name-save').addEventListener('click', confirmSavePlan);
+document.getElementById('plan-name-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') confirmSavePlan();
+});
+
+// --- Rename modal (tap title in topbar) -----------------------------------
+
+function updateRenameCount() {
+  const input = document.getElementById('rename-input');
+  const count = document.getElementById('rename-count');
+  if (count) count.textContent = `${input.value.length}/${input.maxLength} characters`;
+}
+
+function openRenameModal() {
+  const input = document.getElementById('rename-input');
+  input.value = els.title.textContent;
+  updateRenameCount();
+  document.getElementById('rename-modal').hidden = false;
+  setTimeout(() => { input.select(); input.focus(); }, 50);
+}
+
+function closeRenameModal() {
+  document.getElementById('rename-modal').hidden = true;
+}
+
+async function confirmRename() {
+  const input = document.getElementById('rename-input');
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  const btn = document.getElementById('rename-save');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    await renameSession(state.sessionId, name);
+    closeRenameModal();
+  } catch (_) {
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
+}
+
+els.title.addEventListener('click', () => { if (state.sessionId) openRenameModal(); });
+document.getElementById('rename-close').addEventListener('click', closeRenameModal);
+document.getElementById('rename-modal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('rename-modal')) closeRenameModal();
+});
+document.getElementById('rename-save').addEventListener('click', confirmRename);
+document.getElementById('rename-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') confirmRename();
+  if (e.key === 'Escape') closeRenameModal();
+});
+document.getElementById('rename-input').addEventListener('input', updateRenameCount);
 
 async function sendMessage(text) {
   if (!state.sessionId) await createSession();
@@ -219,8 +406,13 @@ async function respondPermission(request_id, decision) {
 }
 
 async function interrupt() {
-  if (!state.sessionId) return;
-  await api(`api/sessions/${state.sessionId}/interrupt`, { method: 'POST' });
+  if (!state.sessionId || !state.generating) return;
+  els.stop.disabled = true;
+  try {
+    await api(`api/sessions/${state.sessionId}/interrupt`, { method: 'POST' });
+  } catch (_) {}
+  // Fallback: if generation_ended never arrives via SSE, clear state after 8s
+  setTimeout(() => { if (state.generating) setGenerating(false); }, 8000);
 }
 
 async function uploadFile(file) {
@@ -233,22 +425,51 @@ async function uploadFile(file) {
 
 // --- SSE -----------------------------------------------------------------
 
+// Open (or re-open) the event stream for a session. Tracks the time of the last
+// received message so the staleness watchdog can spot a zombie connection.
+function openStream(id) {
+  if (state.es) { try { state.es.close(); } catch (_) {} }
+  state.streamId = id;
+  state.lastEventAt = Date.now();
+  const es = new EventSource(`api/sessions/${id}/stream`);
+  es.addEventListener('claude', (e) => {
+    state.lastEventAt = Date.now();
+    try { handleEvent(JSON.parse(e.data)); } catch (err) { console.error(err, e.data); }
+  });
+  es.addEventListener('ping', () => { state.lastEventAt = Date.now(); });
+  es.onerror = () => { /* browser may retry on a clean close; the watchdog is the backstop for zombie connections */ };
+  state.es = es;
+}
+
+// Zombie-SSE backstop. The server pings every 15s, so if we've heard nothing
+// (event OR ping) for 45s the EventSource is half-open — common on mobile after
+// backgrounding/network changes, and the browser often won't fire onerror or
+// reconnect on its own. Force a fresh stream, which re-snapshots the thread.
+// This is the fix for the recurring "whole chat stalls until I switch chats"
+// bug — switching chats happened to reopen the stream, masking the real cause.
+function maybeReconnectStream() {
+  if (!state.sessionId || !state.es) return;
+  if (Date.now() - (state.lastEventAt || 0) > 45000) {
+    openStream(state.sessionId);
+  }
+}
+setInterval(maybeReconnectStream, 10000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) maybeReconnectStream();
+});
+
 function selectSession(id) {
+  if (state.sessionId) localStorage.setItem(`draft_${state.sessionId}`, els.input.value);
   state.sessionId = id;
   els.thread.innerHTML = '';
   setGenerating(false);
   const sess = state.sessions.find(s => s.id === id);
   els.title.textContent = sess?.title || 'Conversation';
+  els.title.classList.add('editable');
   renderModeToggle(sess?.permission_mode || 'default');
   renderModelTile();
   closeDrawer();
-  if (state.es) state.es.close();
-  state.es = new EventSource(`api/sessions/${id}/stream`);
-  state.es.addEventListener('claude', (e) => {
-    try { handleEvent(JSON.parse(e.data)); } catch (err) { console.error(err, e.data); }
-  });
-  state.es.addEventListener('ping', () => { /* keep-alive */ });
-  state.es.onerror = () => { /* browser auto-reconnects */ };
+  openStream(id);
   renderDrawer();
   // Mark the newly-selected session focused immediately; the periodic
   // heartbeat then refreshes every 20s. Skip when hidden — iOS will have
@@ -257,35 +478,56 @@ function selectSession(id) {
     postFocus(true);
     startFocusHeartbeat();
   }
+  const draft = localStorage.getItem(`draft_${id}`) || '';
+  els.input.value = draft;
+  els.input.style.height = 'auto';
+  if (draft) els.input.style.height = Math.min(140, els.input.scrollHeight) + 'px';
 }
+
+let _replayingSnapshot = false;
 
 function handleEvent(evt) {
   if (evt.type === 'snapshot') {
     els.thread.innerHTML = '';
+    _replayingSnapshot = true;
     for (const e of evt.events) handleEvent(e);
+    _replayingSnapshot = false;
     return;
   }
   switch (evt.type) {
     case 'user_message':
       appendUserMessage(evt.text, evt.attachments);
       break;
+    case 'thinking_start':
+      startThinkingStream();
+      break;
+    case 'thinking_delta':
+      appendThinkingDelta(evt.text, evt.tokens);
+      break;
+    case 'thinking_stop':
+      finalizeThinking();
+      break;
     case 'assistant_text':
+      finalizeThinking();
       appendAssistantText(evt.text, evt.id);
       break;
     case 'assistant_delta':
+      finalizeThinking();
       appendAssistantDelta(evt.text, evt.id);
       break;
     case 'tool_use':
+      finalizeThinking();
       appendToolCard(evt);
-      state.turnActivity = activityFor(evt);
-      if (state.generating) updateTypingCaption();
       break;
     case 'tool_result':
       updateToolCard(evt);
-      state.turnActivity = null; // back to "Thinking"
-      if (state.generating) updateTypingCaption();
       break;
     case 'permission_request':
+      // Render during snapshot replay too — the server only keeps a
+      // permission_request in the snapshot while its future is still pending
+      // (server filters resolved ones out), so a replayed card is one that
+      // genuinely still needs an answer. Skipping it left the tool card
+      // visible with no approve/deny buttons after a reconnect.
       appendPermissionCard(evt);
       break;
     case 'permission_resolved':
@@ -293,13 +535,24 @@ function handleEvent(evt) {
       // was also open — hide the in-thread card so they don't see stale buttons.
       removePermissionCard(evt.id);
       break;
+    case 'compacting':
+      state.turnActivity = { verb: 'Compacting context' };
+      state.didCompact = true;
+      if (state.generating) updateTypingCaption();
+      break;
     case 'generation_started':
+      finalizeThinking();
       setGenerating(true, evt.started_at);
       break;
     case 'usage':
       addUsageTokens(evt);
       break;
     case 'generation_ended':
+      finalizeThinking();
+      if (state.didCompact) {
+        state.didCompact = false;
+        appendSystem('Context compacted — earlier parts of this conversation were summarised to fit within limits');
+      }
       setGenerating(false);
       if (evt.subtype === 'interrupted') appendSystem('Stopped');
       break;
@@ -364,6 +617,68 @@ function appendAssistantDelta(text, id) {
   el.innerHTML = renderMarkdown(el.dataset.raw);
 }
 
+// --- Live thinking ------------------------------------------------------
+// Two distinct jobs, by design:
+//  • Live token estimate → the bottom typing caption (climbs during the think,
+//    works even when a model redacts the reasoning text, e.g. Opus 4.8).
+//  • Actual reasoning TEXT → a collapsible bubble, created LAZILY only when a
+//    model actually streams words (e.g. Sonnet). No words, no bubble — so we
+//    never show an empty box that just duplicates the caption.
+// Live-only: never persisted, nothing to replay.
+function startThinkingStream() {
+  finalizeThinking();       // close any stray open bubble first
+  // Roll the just-finished block's estimate into the turn base so the live
+  // count keeps climbing across multiple thinking bursts instead of resetting
+  // to ~50 each time a new block's estimated_tokens starts over.
+  state.thinkingBase = (state.thinkingBase || 0) + (state.thinkingTokens || 0);
+  state.thinkingTokens = 0;
+  state.thinkingStart = Date.now();
+}
+
+function appendThinkingDelta(text, tokens) {
+  // Live progress → caption.
+  if (tokens != null) {
+    state.thinkingTokens = Number(tokens) || 0;
+    if (state.generating) updateTypingCaption();
+  }
+  // Real reasoning text → lazily create the bubble and stream into it.
+  if (text) {
+    if (!state.thinkingEl) createThinkingBubble();
+    const body = state.thinkingEl.querySelector('.thinking-body');
+    if (body) body.append(text); // text-node append — cheap, no full re-render
+    scrollToBottom();
+  }
+}
+
+function createThinkingBubble() {
+  const el = document.createElement('div');
+  el.className = 'msg thinking streaming';
+  el.innerHTML =
+    '<button class="thinking-head" type="button">' +
+      '<span class="thinking-spark" aria-hidden="true">✦</span>' +
+      '<span class="thinking-label">Thinking…</span>' +
+      '<span class="thinking-caret" aria-hidden="true">▾</span>' +
+    '</button>' +
+    '<div class="thinking-body"></div>';
+  els.thread.appendChild(el);
+  el.querySelector('.thinking-head').addEventListener('click', () => el.classList.toggle('collapsed'));
+  state.thinkingEl = el;
+  scrollToBottom();
+}
+
+// Collapse the reasoning bubble (if one was created). Token reset is handled by
+// addUsageTokens / setGenerating, not here, so the caption count doesn't dip.
+function finalizeThinking() {
+  const el = state.thinkingEl;
+  if (!el) return;
+  const secs = Math.max(1, Math.round((Date.now() - state.thinkingStart) / 1000));
+  el.classList.remove('streaming');
+  el.classList.add('collapsed');
+  const label = el.querySelector('.thinking-label');
+  if (label) label.textContent = `Thought for ${secs}s`;
+  state.thinkingEl = null;
+}
+
 // Minimal markdown renderer: fenced code blocks, inline code, bold, italic,
 // links, paragraphs/line breaks, simple lists. Returns HTML string.
 function renderMarkdown(src) {
@@ -371,7 +686,10 @@ function renderMarkdown(src) {
   const segments = [];
   let i = 0;
   while (i < src.length) {
-    const fence = src.indexOf('```', i);
+    let fence = src.indexOf('```', i);
+    while (fence !== -1 && fence > 0 && src[fence - 1] !== '\n') {
+      fence = src.indexOf('```', fence + 3);
+    }
     if (fence === -1) {
       segments.push({ type: 'text', content: src.slice(i) });
       break;
@@ -394,7 +712,19 @@ function renderMarkdown(src) {
   return segments.map((seg) => (seg.type === 'code' ? renderCodeBlock(seg) : renderProse(seg.content))).join('');
 }
 
+function sanitizeSvg(svg) {
+  return svg
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/javascript:/gi, '');
+}
+
 function renderCodeBlock(seg) {
+  if ((seg.lang || '').toLowerCase() === 'svg' && !seg.incomplete) {
+    const safe = sanitizeSvg(seg.content);
+    return `<div class="code-block svg-render"><div class="code-head"><span class="code-lang">svg</span><button class="svg-download" type="button">Download PNG</button></div>${safe}</div>`;
+  }
   const lang = escapeHtml(seg.lang || '');
   const code = escapeHtml(seg.content);
   const copy = seg.incomplete ? '' : '<button class="code-copy" type="button">Copy</button>';
@@ -541,6 +871,10 @@ function updateToolCard(evt) {
 }
 
 function appendPermissionCard(evt) {
+  // Guard against a duplicate card for the same request id (e.g. a live event
+  // arriving just after a snapshot replay already rendered it).
+  const existing = document.getElementById(`perm-${evt.id}`);
+  if (existing) existing.remove();
   const card = document.createElement('div');
   card.className = 'permission';
   card.id = `perm-${evt.id}`;
@@ -556,21 +890,18 @@ function appendPermissionCard(evt) {
   const allowTurnBtn = isBash
     ? `<button class="approve-turn">Trust Bash this turn</button>`
     : '';
-  let title;
-  if (isPlan) {
-    title = 'Plan ready — start coding?';
-  } else if (evt.title) {
-    title = `${escapeHtml(evt.title)}?`;
-  } else {
-    title = `Approve ${escapeHtml(evt.tool || 'action')}?`;
-  }
   const approveLabel = isPlan ? 'Approve & start coding' : 'Allow once';
   const rejectLabel = isPlan ? 'Refine plan' : 'Reject';
+  const saveForLaterBtn = isPlan ? `<button class="save-plan">Save for later</button>` : '';
   const planNotice = isPlan
     ? `<div class="plan-notice"><strong>Approve & start coding</strong> switches this chat out of plan mode and begins implementation. <strong>Refine plan</strong> stays in plan mode — Claude will ask what you'd like to change.</div>`
     : '';
+  const cardHeader = isPlan
+    ? `<div class="title">Plan ready — start coding?</div>`
+    : `<div class="perm-header"><span class="perm-icon">⚠</span><span class="perm-label">Permission Required</span></div>
+       <div class="perm-tool">${escapeHtml(evt.title || evt.tool || 'action')}</div>`;
   card.innerHTML = `
-    <div class="title">${title}</div>
+    ${cardHeader}
     ${domainLine}
     <div class="body">${escapeHtml(evt.description || '')}</div>
     ${planNotice}
@@ -578,6 +909,7 @@ function appendPermissionCard(evt) {
       <button class="approve">${approveLabel}</button>
       ${allowDomainBtn}
       ${allowTurnBtn}
+      ${saveForLaterBtn}
       <button class="reject">${rejectLabel}</button>
     </div>
   `;
@@ -588,6 +920,13 @@ function appendPermissionCard(evt) {
   if (allowDomain) allowDomain.addEventListener('click', () => respondPermission(reqId, 'allow_domain'));
   const allowTurn = card.querySelector('.approve-turn');
   if (allowTurn) allowTurn.addEventListener('click', () => respondPermission(reqId, 'allow_turn'));
+  const savePlanBtn = card.querySelector('.save-plan');
+  if (savePlanBtn) savePlanBtn.addEventListener('click', () => {
+    openPlanNameModal(evt.description || '', () => {
+      removePermissionCard(reqId);
+      interrupt();
+    });
+  });
   els.thread.appendChild(card);
 }
 
@@ -632,6 +971,7 @@ function setGenerating(on, startedAt) {
   state.generating = on;
   els.send.hidden = on;
   els.stop.hidden = !on;
+  els.stop.disabled = false;
   const indicator = document.getElementById('typing-indicator');
   if (on) {
     // Prefer the server's timestamp so reconnecting (HA re-mounting the panel,
@@ -639,12 +979,16 @@ function setGenerating(on, startedAt) {
     // instead of resetting to 0s. Falls back to client clock if absent.
     state.turnStartedAt = startedAt || Date.now();
     state.turnTokens = 0;
+    state.thinkingTokens = 0;
+    state.thinkingBase = 0;
+    state.tokensShownMax = 0;
     state.turnActivity = null;
     indicator.hidden = false;
     updateTypingCaption();
     clearInterval(state.typingTimer);
     state.typingTimer = setInterval(updateTypingCaption, 1000);
   } else {
+    document.querySelectorAll('.permission').forEach(el => el.remove());
     indicator.hidden = true;
     clearInterval(state.typingTimer);
     state.typingTimer = null;
@@ -655,11 +999,19 @@ function setGenerating(on, startedAt) {
 function updateTypingCaption() {
   const caption = document.getElementById('typing-caption');
   const secs = Math.max(0, Math.floor((Date.now() - state.turnStartedAt) / 1000));
-  const a = state.turnActivity;
-  const activity = a ? (a.target ? `${a.verb} ${a.target}` : a.verb) : 'Thinking';
+  const activity = state.turnActivity?.verb || 'Thinking';
   const parts = [activity, `${secs}s`];
-  if (state.turnTokens) {
-    const t = state.turnTokens;
+  // turnTokens = settled usage from completed messages; thinkingBase = finished
+  // thinking bursts this turn; thinkingTokens = the current burst's live
+  // estimate. Summing all three makes the count climb in real time across
+  // multiple thinking bursts, not just jump on each usage event.
+  let t = (state.turnTokens || 0) + (state.thinkingBase || 0) + (state.thinkingTokens || 0);
+  // A live estimate can overshoot the real usage that later replaces it, which
+  // would show a dip. Clamp to a per-turn high-water mark so the count only
+  // ever climbs (it's an approximation anyway).
+  t = Math.max(t, state.tokensShownMax || 0);
+  state.tokensShownMax = t;
+  if (t) {
     parts.push(t >= 1000 ? `${(t / 1000).toFixed(1)}k tokens` : `${t} tokens`);
   }
   caption.textContent = parts.join(' · ');
@@ -674,7 +1026,7 @@ function activityFor(evt) {
   else if (name === 'Grep' || name === 'Glob') verb = 'Searching';
   else if (name === 'Edit' || name === 'MultiEdit' || name === 'Write' || name === 'NotebookEdit') verb = 'Editing';
   else if (name === 'WebFetch') verb = 'Fetching';
-  else if (name === 'ExitPlanMode') verb = 'Finalizing plan';
+  else if (name === 'ExitPlanMode') verb = 'Finalising plan';
   else if (name.startsWith('mcp__')) verb = 'Calling';
   else verb = name;
 
@@ -695,6 +1047,10 @@ function activityFor(evt) {
 
 function addUsageTokens(evt) {
   state.turnTokens += (evt.output_tokens || 0) + (evt.input_tokens || 0);
+  // Real tokens are now in turnTokens — drop the live estimates so we don't
+  // double-count.
+  state.thinkingTokens = 0;
+  state.thinkingBase = 0;
   if (state.generating) updateTypingCaption();
 }
 
@@ -738,6 +1094,9 @@ function renderDrawer() {
     empty.className = 'drawer-empty';
     empty.textContent = 'No conversations yet. Tap + to start one.';
     els.drawerBody.appendChild(empty);
+  }
+  if (state.plans.length) {
+    els.drawerBody.appendChild(renderPlansGroup());
   }
 }
 
@@ -844,6 +1203,7 @@ function renderGroup(projectId, name, sessions) {
     menuBtn.setAttribute('aria-label', 'Project actions');
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      const pidx = state.projects.findIndex(p => p.id === projectId);
       openMenu(menuBtn, [
         { label: 'New chat here', action: () => createSession(projectId) },
         { label: 'Project instructions', action: () => openProjectNotes(projectId, name) },
@@ -851,6 +1211,8 @@ function renderGroup(projectId, name, sessions) {
           const n = prompt('Project name?', name);
           if (n && n.trim()) renameProject(projectId, n.trim());
         }},
+        ...(pidx > 0 ? [{ label: 'Move up', action: () => reorderProject(projectId, -1) }] : []),
+        ...(pidx < state.projects.length - 1 ? [{ label: 'Move down', action: () => reorderProject(projectId, 1) }] : []),
         { label: 'Delete project', danger: true, action: () => {
           if (confirm(`Delete project "${name}"? Chats inside will move to Unsorted.`)) deleteProject(projectId);
         }},
@@ -869,6 +1231,72 @@ function renderGroup(projectId, name, sessions) {
   const list = document.createElement('ul');
   list.className = 'session-list';
   for (const s of sessions) list.appendChild(renderSessionRow(s));
+  group.appendChild(list);
+  return group;
+}
+
+function renderPlansGroup() {
+  const group = document.createElement('section');
+  group.className = 'project-group plans-group';
+  const collapseKey = '__saved_plans__';
+  const collapsed = state.collapsedProjects.has(collapseKey);
+  if (collapsed) group.classList.add('collapsed');
+
+  const header = document.createElement('header');
+  header.className = 'project-header';
+  const caret = document.createElement('span');
+  caret.className = 'caret';
+  caret.textContent = '▸';
+  const label = document.createElement('span');
+  label.className = 'project-name';
+  label.textContent = 'Saved Plans';
+  const count = document.createElement('span');
+  count.className = 'project-count';
+  count.textContent = state.plans.length;
+  header.append(caret, label, count);
+  header.addEventListener('click', () => {
+    if (state.collapsedProjects.has(collapseKey)) state.collapsedProjects.delete(collapseKey);
+    else state.collapsedProjects.add(collapseKey);
+    persistCollapsedProjects();
+    renderDrawer();
+  });
+  group.appendChild(header);
+
+  const list = document.createElement('ul');
+  list.className = 'session-list';
+  for (const plan of state.plans) {
+    const li = document.createElement('li');
+    const text = document.createElement('div');
+    text.className = 'session-text';
+    const title = document.createElement('span');
+    title.className = 'session-title';
+    title.textContent = plan.name;
+    text.appendChild(title);
+    const dateStr = formatSessionDate(plan.created_at);
+    if (dateStr) {
+      const date = document.createElement('span');
+      date.className = 'session-date';
+      date.textContent = dateStr;
+      text.appendChild(date);
+    }
+    text.addEventListener('click', () => openPlanViewModal(plan));
+    li.appendChild(text);
+    const menuBtn = document.createElement('button');
+    menuBtn.className = 'row-menu';
+    menuBtn.innerHTML = '⋯';
+    menuBtn.setAttribute('aria-label', 'Plan actions');
+    menuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openMenu(menuBtn, [
+        { label: 'Load into new chat', action: () => loadPlanIntoNewChat(plan.id) },
+        { label: 'Delete', danger: true, action: () => {
+          if (confirm(`Delete saved plan "${plan.name}"?`)) deletePlan(plan.id);
+        }},
+      ]);
+    });
+    li.appendChild(menuBtn);
+    list.appendChild(li);
+  }
   group.appendChild(list);
   return group;
 }
@@ -899,7 +1327,7 @@ function renderSessionRow(s) {
   title.className = 'session-title';
   title.textContent = s.title || 'Untitled';
   text.appendChild(title);
-  const dateStr = formatSessionDate(s.created_at);
+  const dateStr = formatSessionDate(s.last_activity ?? s.created_at);
   if (dateStr) {
     const date = document.createElement('span');
     date.className = 'session-date';
@@ -924,7 +1352,7 @@ function renderSessionRow(s) {
     openMenu(menuBtn, [
       { label: 'Rename', action: () => {
         const n = prompt('Chat name?', s.title);
-        if (n && n.trim()) renameSession(s.id, n.trim());
+        if (n && n.trim()) renameSession(s.id, n.trim().slice(0, 50));
       }},
       ...(moveTargets.length ? [{ label: 'Move to…', submenu: moveTargets }] : []),
       { label: 'Delete', danger: true, action: () => {
@@ -938,8 +1366,15 @@ function renderSessionRow(s) {
 
 // --- Action menu ---------------------------------------------------------
 
-function openMenu(trigger, items) {
+function openMenu(trigger, items, isSubmenu = false) {
+  // Tapping the same trigger while its menu is open closes it (toggle). The
+  // submenu path reuses the trigger, so it opts out of the toggle check.
+  if (!isSubmenu && !els.actionMenu.hidden && els.actionMenu._trigger === trigger) {
+    closeMenu();
+    return;
+  }
   closeMenu();
+  els.actionMenu._trigger = trigger;
   const menu = els.actionMenu;
   menu.innerHTML = '';
   for (const item of items) {
@@ -949,7 +1384,7 @@ function openMenu(trigger, items) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (item.submenu) {
-        openMenu(trigger, item.submenu);
+        openMenu(trigger, item.submenu, true);
       } else {
         closeMenu();
         item.action();
@@ -969,11 +1404,24 @@ function openMenu(trigger, items) {
     ? `${Math.max(8, rect.top - menuHeight - 4)}px`
     : `${rect.bottom + 4}px`;
   menu.style.visibility = '';
-  setTimeout(() => document.addEventListener('click', closeMenu, { once: true }), 0);
+  // Close on any outside click or Escape. Persistent listeners removed in
+  // closeMenu — the trigger's own handler stopPropagation()s, so re-tapping it
+  // routes through the toggle above rather than this dismiss path.
+  setTimeout(() => {
+    document.addEventListener('click', closeMenu);
+    document.addEventListener('keydown', onMenuKeydown);
+  }, 0);
+}
+
+function onMenuKeydown(e) {
+  if (e.key === 'Escape') closeMenu();
 }
 
 function closeMenu() {
   els.actionMenu.hidden = true;
+  els.actionMenu._trigger = null;
+  document.removeEventListener('click', closeMenu);
+  document.removeEventListener('keydown', onMenuKeydown);
 }
 
 function openDrawer() { els.drawer.hidden = false; }
@@ -1016,6 +1464,7 @@ function clearAttachments() {
 els.input.addEventListener('input', () => {
   els.input.style.height = 'auto';
   els.input.style.height = Math.min(140, els.input.scrollHeight) + 'px';
+  if (state.sessionId) localStorage.setItem(`draft_${state.sessionId}`, els.input.value);
 });
 
 els.input.addEventListener('keydown', (e) => {
@@ -1069,35 +1518,11 @@ els.cpPhotos.addEventListener('click', () => {
 els.cpPlan.addEventListener('click', () => {
   setPermissionMode(currentMode() === 'plan' ? 'default' : 'plan');
 });
-els.cpModel.addEventListener('click', (e) => {
-  e.stopPropagation();
-  if (!state.sessionId) return;
-  setComposerView('models');
-});
-document.querySelectorAll('.cp-model-pick').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const raw = btn.getAttribute('data-model') || '';
-    setSessionModel(raw || null);
-    setComposerView('main');
-  });
-});
 
+// Model/effort selection now lives in the Usage & Model modal (tap the topbar
+// pill). The composer panel only has the main view now.
 function setComposerView(view) {
   els.composerPanel.dataset.view = view;
-  const main = els.composerPanel.querySelector('.cp-view-main');
-  const models = els.composerPanel.querySelector('.cp-view-models');
-  if (main) main.hidden = view !== 'main';
-  if (models) models.hidden = view !== 'models';
-  if (view === 'models') renderModelPicks();
-}
-
-function renderModelPicks() {
-  const sess = state.sessions.find(x => x.id === state.sessionId) || {};
-  const cur = sess.model || null;
-  document.querySelectorAll('.cp-model-pick').forEach((btn) => {
-    const id = btn.getAttribute('data-model') || null;
-    btn.classList.toggle('active', (id || null) === (cur || null));
-  });
 }
 
 els.drawerToggle.addEventListener('click', openDrawer);
@@ -1120,17 +1545,16 @@ function renderModeToggle(mode) {
 }
 
 function renderModelTile() {
-  if (!els.cpModelLabel) return;
+  const topbarLabel = document.getElementById('topbar-model-label');
+  if (!topbarLabel) return;
   if (!state.sessionId) {
-    els.cpModelLabel.textContent = 'Model';
-    els.cpModel.classList.remove('active');
+    topbarLabel.textContent = 'Claude';
     return;
   }
   const sess = state.sessions.find(x => x.id === state.sessionId) || {};
   const cur = sess.model || null;
   const label = (MODELS.find(m => m.id === cur) || MODELS[0]).label;
-  els.cpModelLabel.textContent = label;
-  els.cpModel.classList.toggle('active', cur != null);
+  topbarLabel.textContent = label;
 }
 
 function currentMode() {
@@ -1159,6 +1583,46 @@ async function setPermissionMode(next) {
     appendSystem(`Mode change failed: ${err.message}`);
   }
 }
+
+els.thread.addEventListener('click', async (e) => {
+  const dlBtn = e.target.closest('.svg-download');
+  if (dlBtn) {
+    const svgEl = dlBtn.closest('.svg-render')?.querySelector('svg');
+    if (!svgEl) return;
+    dlBtn.textContent = 'Saving…';
+    const svgStr = new XMLSerializer().serializeToString(svgEl);
+    const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) {
+        const vb = svgEl.viewBox?.baseVal;
+        if (vb && vb.width) { w = vb.width; h = vb.height; }
+        else { const r = svgEl.getBoundingClientRect(); w = r.width; h = r.height; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((pngBlob) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(pngBlob);
+        a.download = 'mockup.png';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        dlBtn.textContent = 'Download PNG';
+      });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      dlBtn.textContent = 'Failed';
+      setTimeout(() => { dlBtn.textContent = 'Download PNG'; }, 1500);
+    };
+    img.src = url;
+    return;
+  }
+});
 
 els.thread.addEventListener('click', async (e) => {
   const btn = e.target.closest('.code-copy');
@@ -1218,6 +1682,8 @@ const settingsEls = {
   token: document.getElementById('ha-token'),
   tokenStatus: document.getElementById('ha-token-status'),
   status: document.getElementById('settings-status'),
+  logInfoText: document.getElementById('log-info-text'),
+  logRetention: document.getElementById('log-retention-days'),
 };
 
 // In-memory copy of the persisted allowlist while the settings modal is open.
@@ -1409,6 +1875,19 @@ async function openSettings() {
       ? 'A token is already saved. Leave blank to keep it, or paste a new one to replace.'
       : 'No token saved yet.';
     settingsEls.status.hidden = true;
+    // Log retention
+    settingsEls.logRetention.value = String(s.log_retention_days ?? 90);
+    const li = s.log_info || {};
+    if (li.entry_count > 0) {
+      const kb = li.size_bytes ? ` · ${(li.size_bytes / 1024).toFixed(0)} KB` : '';
+      const oldest = li.oldest_ts
+        ? new Date(li.oldest_ts * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+        : null;
+      settingsEls.logInfoText.textContent =
+        `${li.entry_count.toLocaleString()} entries${kb}${oldest ? ` · oldest: ${oldest}` : ''}`;
+    } else {
+      settingsEls.logInfoText.textContent = 'No log entries yet.';
+    }
     syncHaFieldsVisibility();
     // Must run AFTER settingsEls.enabled.checked is set — the picker is
     // gated on the HA-integration toggle and would otherwise see stale state.
@@ -1459,12 +1938,16 @@ const usageEls = {
 };
 const usageBannerTextEl = usageEls.banner ? usageEls.banner.querySelector('.ha-banner-text') : null;
 const usageBannerCtaEl = usageEls.banner ? usageEls.banner.querySelector('.ha-banner-cta') : null;
-if (usageEls.ringBtn) usageEls.ringBtn.addEventListener('click', () => toggleCost());
+// The whole model pill (doughnut + label) opens the Usage & Model modal, not
+// just the small ring button — the label was previously a dead tap target.
+const modelPillEl = document.querySelector('.model-pill');
+if (modelPillEl) modelPillEl.addEventListener('click', () => toggleCost());
 if (usageBannerCtaEl) usageBannerCtaEl.addEventListener('click', () => openCost());
 
 function setMeterTone(el, p) {
   if (!el) return;
-  el.classList.toggle('warn', p != null && p >= 70 && p < 90);
+  el.classList.toggle('ok',     p != null && p < 70);
+  el.classList.toggle('warn',   p != null && p >= 70 && p < 90);
   el.classList.toggle('danger', p != null && p >= 90);
 }
 
@@ -1528,9 +2011,10 @@ async function saveSettings() {
         webfetch_allowed_domains: webfetchDomains,
         bash_auto_allow: safeBashEnabled,
         notify_devices: notifyDevices,
+        log_retention_days: parseInt(settingsEls.logRetention.value, 10),
       }),
     });
-    const savedMsg = 'Saved. Start a new chat (or use \u201cSummarize & start fresh\u201d on an existing one) to apply.';
+    const savedMsg = 'Saved. Start a new chat (or use \u201cSummarise & start fresh\u201d on an existing one) to apply.';
     settingsEls.status.hidden = false;
     settingsEls.status.classList.remove('error');
     if (settingsEls.enabled.checked) {
@@ -1613,6 +2097,263 @@ notesEls.close.addEventListener('click', () => { notesEls.panel.hidden = true; }
 notesEls.panel.addEventListener('click', (e) => { if (e.target === notesEls.panel) notesEls.panel.hidden = true; });
 notesEls.save.addEventListener('click', saveProjectNotes);
 
+// --- Audit Log Modal ---------------------------------------------------------
+
+document.getElementById('audit-log-open').addEventListener('click', openAuditModal);
+document.getElementById('audit-close').addEventListener('click', closeAuditModal);
+
+let _auditBlockedEvents = [];
+
+document.getElementById('blocked-close').addEventListener('click', () => {
+  document.getElementById('blocked-modal').hidden = true;
+  document.getElementById('audit-modal').hidden = false;
+});
+
+function openBlockedModal(category) {
+  const events = category
+    ? _auditBlockedEvents.filter(e => e.category === category)
+    : _auditBlockedEvents;
+  if (!events.length) return;
+  const COPY = {
+    user:  { title: 'Rejected by you',      desc: 'Actions Claude requested that you chose to reject from the permission card.' },
+    rules: { title: 'Blocked by security',  desc: "Actions stopped automatically by the app's built-in security rules before reaching you." },
+  };
+  const copy = COPY[category] || { title: 'Blocked actions', desc: 'All actions that were stopped, either by you or by built-in security rules.' };
+  document.getElementById('blocked-title').textContent = copy.title;
+  document.getElementById('blocked-desc').textContent  = copy.desc;
+  document.getElementById('audit-modal').hidden = true;
+  _renderBlockedList(events);
+  document.getElementById('blocked-modal').hidden = false;
+}
+
+function _renderBlockedList(events) {
+  const ul = document.getElementById('blocked-list');
+  if (!events.length) {
+    ul.innerHTML = '<li class="audit-empty">Nothing blocked yet.</li>';
+    return;
+  }
+  ul.innerHTML = events.map(({ ts, tool, detail, category }) => {
+    const badge = category === 'user'
+      ? '<span class="audit-badge audit-badge-user-block">You rejected</span>'
+      : '<span class="audit-badge audit-badge-blocked">Security rule</span>';
+    const toolLabel = tool ? `<span class="blocked-tool">${escapeHtml(tool)}</span>` : '';
+    const detailStr = detail ? `<span class="blocked-detail">${escapeHtml(detail.length > 100 ? detail.slice(0, 100) + '…' : detail)}</span>` : '';
+    return `<li class="blocked-item">` +
+      `<span class="blocked-item-main">${toolLabel}${detailStr}</span>` +
+      `<span class="blocked-item-meta">${badge}<span class="audit-entry-time">${_fmtTs(ts)}</span></span>` +
+      `</li>`;
+  }).join('');
+}
+
+let _auditSearchTimer = null;
+let _auditSinceSeconds = 86400; // default: last 24h
+
+document.getElementById('audit-search').addEventListener('input', e => {
+  clearTimeout(_auditSearchTimer);
+  _auditSearchTimer = setTimeout(() => _loadAudit(e.target.value.trim()), 300);
+});
+
+document.querySelectorAll('.audit-filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.audit-filter-btn').forEach(b => b.classList.remove('audit-filter-active'));
+    btn.classList.add('audit-filter-active');
+    _auditSinceSeconds = parseInt(btn.dataset.since, 10);
+    _loadAudit(document.getElementById('audit-search').value.trim());
+  });
+});
+
+async function openAuditModal() {
+  document.getElementById('settings').hidden = true;
+  document.getElementById('audit-modal').hidden = false;
+  document.getElementById('audit-search').value = '';
+  // Reset to 24h filter
+  _auditSinceSeconds = 86400;
+  document.querySelectorAll('.audit-filter-btn').forEach(b => b.classList.remove('audit-filter-active'));
+  const defaultBtn = document.querySelector('.audit-filter-btn[data-since="86400"]');
+  if (defaultBtn) defaultBtn.classList.add('audit-filter-active');
+  await _loadAudit('');
+}
+
+function closeAuditModal() {
+  document.getElementById('audit-modal').hidden = true;
+  document.getElementById('settings').hidden = false;
+}
+
+async function _loadAudit(search) {
+  const entriesEl = document.getElementById('audit-entries-list');
+  const statusEl  = document.getElementById('audit-entries-status');
+  entriesEl.innerHTML = '<li class="audit-loading">Loading…</li>';
+  statusEl.hidden = true;
+
+  const params = new URLSearchParams({ limit: '100' });
+  if (search) params.set('search', search);
+  if (_auditSinceSeconds > 0) {
+    params.set('since', String(Math.floor(Date.now() / 1000) - _auditSinceSeconds));
+  }
+
+  let data;
+  try {
+    data = await api(`api/audit?${params}`);
+  } catch (err) {
+    entriesEl.innerHTML = '';
+    statusEl.hidden = false;
+    statusEl.textContent = `Failed to load audit log: ${err.message}`;
+    return;
+  }
+
+  _auditBlockedEvents = data.summary.blocked_events || [];
+  _renderAuditStats(data.summary);
+  _renderAuditFiles(data.summary.files);
+  _renderAuditUploads(data.summary.uploads);
+  _renderAuditBash(data.summary.bash_commands);
+  _renderAuditEntries(data.entries, data.total, search);
+}
+
+function _renderAuditStats(s) {
+  const el = document.getElementById('audit-stats');
+  const userCls   = s.user_blocked_count  > 0 ? ' audit-stat-clickable audit-stat-user-block' : '';
+  const rulesCls  = s.rules_blocked_count > 0 ? ' audit-stat-clickable audit-stat-danger' : '';
+  el.innerHTML =
+    `<span class="audit-stat"><span class="audit-stat-num">${s.total_tool_calls}</span><span class="audit-stat-label">tool calls</span></span>` +
+    `<span class="audit-stat${userCls}" id="audit-stat-user-blocked" role="button" tabindex="0" title="View actions you rejected"><span class="audit-stat-num">${s.user_blocked_count ?? 0}</span><span class="audit-stat-label">you rejected</span></span>` +
+    `<span class="audit-stat${rulesCls}" id="audit-stat-rules-blocked" role="button" tabindex="0" title="View security rule blocks"><span class="audit-stat-num">${s.rules_blocked_count ?? 0}</span><span class="audit-stat-label">security rule</span></span>` +
+    `<span class="audit-stat"><span class="audit-stat-num">${s.files.length}</span><span class="audit-stat-label">files accessed</span></span>` +
+    `<span class="audit-stat"><span class="audit-stat-num">${s.uploads.length}</span><span class="audit-stat-label">uploads</span></span>`;
+  const userBox  = document.getElementById('audit-stat-user-blocked');
+  const rulesBox = document.getElementById('audit-stat-rules-blocked');
+  if (userBox && s.user_blocked_count > 0) {
+    userBox.addEventListener('click', () => openBlockedModal('user'));
+    userBox.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') openBlockedModal('user'); });
+  }
+  if (rulesBox && s.rules_blocked_count > 0) {
+    rulesBox.addEventListener('click', () => openBlockedModal('rules'));
+    rulesBox.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') openBlockedModal('rules'); });
+  }
+}
+
+const _BASH_RISKY = [/\brm\b/, /\bgit\s+(push|reset|rebase)\b/, /\bchmod\b/, /\bchown\b/, /\bcurl\b.*\|/, /\bwget\b.*\|/];
+
+function _bashRisk(cmd, blocked) {
+  if (blocked) return 'blocked';
+  if (_BASH_RISKY.some(p => p.test(cmd))) return 'risky';
+  return 'safe';
+}
+
+function _renderAuditBash(cmds) {
+  const ul = document.getElementById('audit-bash-list');
+  if (!cmds.length) { ul.innerHTML = '<li class="audit-empty">No bash commands recorded.</li>'; return; }
+  ul.innerHTML = cmds.map(({ cmd, count, blocked }) => {
+    const risk  = _bashRisk(cmd, blocked);
+    const badge = risk === 'blocked'
+      ? '<span class="audit-badge audit-badge-blocked">blocked</span>'
+      : risk === 'risky'
+      ? '<span class="audit-badge audit-badge-risky">review</span>'
+      : '';
+    const short = cmd.length > 90 ? cmd.slice(0, 90) + '…' : cmd;
+    return `<li class="audit-bash-item audit-risk-${risk}">` +
+      `<code class="audit-bash-cmd">${escapeHtml(short)}</code>` +
+      `<span class="audit-bash-meta">${badge}<span class="audit-bash-count">${count}\xd7</span></span>` +
+      `</li>`;
+  }).join('');
+}
+
+function _renderAuditFiles(files) {
+  const ul = document.getElementById('audit-files-list');
+  if (!files.length) { ul.innerHTML = '<li class="audit-empty">No files recorded.</li>'; return; }
+  ul.innerHTML = files.map(({ path, reads, writes }) => {
+    const parts = path.split('/');
+    const name  = parts[parts.length - 1];
+    const dir   = parts.slice(0, -1).join('/') || '/';
+    const badges =
+      (reads  ? `<span class="audit-badge audit-badge-read">${reads}r</span>` : '') +
+      (writes ? `<span class="audit-badge audit-badge-write">${writes}w</span>` : '');
+    return `<li class="audit-file-item">` +
+      `<span class="audit-file-info"><span class="audit-file-name">${escapeHtml(name)}</span>` +
+      `<span class="audit-file-dir setting-help">${escapeHtml(dir)}</span></span>` +
+      `<span class="audit-file-badges">${badges}</span></li>`;
+  }).join('');
+}
+
+function _renderAuditUploads(uploads) {
+  const ul = document.getElementById('audit-uploads-list');
+  if (!uploads.length) { ul.innerHTML = '<li class="audit-empty">No attachments recorded.</li>'; return; }
+  ul.innerHTML = uploads.map(({ path, size, original_name }) => {
+    const displayName = original_name || path.split('/').pop() || path;
+    const kb   = size ? `${(size / 1024).toFixed(1)} KB` : '';
+    const time = _fmtTs(uploads.find(u => u.path === path)?.ts || 0);
+    const sub  = [kb].filter(Boolean).join(' · ');
+    return `<li class="audit-file-item">` +
+      `<span class="audit-file-info"><span class="audit-file-name">${escapeHtml(displayName)}</span>` +
+      `${sub ? `<span class="audit-file-dir setting-help">${escapeHtml(sub)}</span>` : ''}</span>` +
+      `<span class="audit-file-badges"><span class="audit-badge audit-badge-upload">upload</span></span></li>`;
+  }).join('');
+}
+
+function _auditEntryLabel(entry) {
+  const p = entry.payload || {};
+  if (entry.type === 'hook_allow') {
+    const tool = p.tool || '';
+    const inp  = p.input || {};
+    if (tool === 'Bash')   return `Bash: ${(inp.command || '').slice(0, 70)}`;
+    if (tool === 'Read')   return `Read: ${(inp.file_path || '').split('/').pop()}`;
+    if (tool === 'Write')  return `Write: ${(inp.file_path || '').split('/').pop()}`;
+    if (tool === 'Edit' || tool === 'MultiEdit') return `Edit: ${(inp.file_path || '').split('/').pop()}`;
+    if (tool === 'WebFetch') return `WebFetch: ${(inp.url || inp.URL || '').slice(0, 60)}`;
+    return tool || 'allowed';
+  }
+  if (entry.type === 'hook_block') {
+    const inner = (p.payload || {});
+    const tool  = inner.tool || '';
+    const inp   = inner.input || {};
+    if (tool === 'Bash') return `Blocked Bash: ${(inp.command || '').slice(0, 60)}`;
+    return `Blocked: ${tool || p.reason || 'unknown'}`;
+  }
+  const MAP = {
+    hook_snapshot: 'Snapshot',
+    permission_requested: 'Permission requested',
+    permission_response: 'Permission response',
+    permission_auto_allowed: 'Auto-allowed',
+    settings_updated: 'Settings updated',
+    session_created: 'Session started',
+    session_deleted: 'Session deleted',
+    user_message: 'User message',
+    upload: 'Attachment uploaded',
+    plan_saved: 'Plan saved',
+    plan_deleted: 'Plan deleted',
+  };
+  return MAP[entry.type] || entry.type.replace(/_/g, ' ');
+}
+
+function _fmtTs(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function _renderAuditEntries(entries, total, search) {
+  const ul       = document.getElementById('audit-entries-list');
+  const statusEl = document.getElementById('audit-entries-status');
+  if (!entries.length) {
+    ul.innerHTML = search
+      ? `<li class="audit-empty">No entries matching “${escapeHtml(search)}”.</li>`
+      : '<li class="audit-empty">No activity recorded yet.</li>';
+    statusEl.hidden = true;
+    return;
+  }
+  ul.innerHTML = entries.map(entry => {
+    const blocked = entry.type === 'hook_block';
+    const cls     = blocked ? 'audit-entry audit-entry-blocked' : 'audit-entry';
+    return `<li class="${cls}">` +
+      `<span class="audit-entry-label">${escapeHtml(_auditEntryLabel(entry))}</span>` +
+      `<span class="audit-entry-time">${_fmtTs(entry.ts)}</span></li>`;
+  }).join('');
+  if (total > entries.length) {
+    statusEl.hidden = false;
+    statusEl.textContent = `Showing ${entries.length} of ${total}${search ? ' matching' : ''} entries (newest first).`;
+  } else {
+    statusEl.hidden = true;
+  }
+}
+
 // --- Chat actions menu ---------------------------------------------------
 
 const chatActionsBtn = document.getElementById('chat-actions');
@@ -1650,6 +2391,20 @@ function setUsageBlock(pctEl, barEl, resetEl, pct, ts) {
   resetEl.textContent = fmtUntil(ts);
 }
 
+function renderCostModalPicks() {
+  const sess = state.sessions.find(x => x.id === state.sessionId) || {};
+  const curModel = sess.model || null;
+  const curEffort = sess.effort || null;
+  document.querySelectorAll('.cost-model-pick').forEach((btn) => {
+    const id = btn.getAttribute('data-model') || null;
+    btn.classList.toggle('active', (id || null) === curModel);
+  });
+  document.querySelectorAll('.cost-effort-pick').forEach((btn) => {
+    const e = btn.getAttribute('data-effort') || null;
+    btn.classList.toggle('active', (e || null) === curEffort);
+  });
+}
+
 async function openCost() {
   costEls.pct5h.textContent = '…';
   costEls.pct7d.textContent = '…';
@@ -1657,6 +2412,7 @@ async function openCost() {
   costEls.bar7d.style.width = '0%';
   costEls.reset5h.textContent = 'Resets —';
   costEls.reset7d.textContent = 'Resets —';
+  renderCostModalPicks();
   costEls.panel.hidden = false;
   try {
     const u = await api('api/usage');
@@ -1667,6 +2423,22 @@ async function openCost() {
     costEls.panel.hidden = true;
   }
 }
+
+document.querySelectorAll('.cost-model-pick').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const raw = btn.getAttribute('data-model') || '';
+    setSessionModel(raw || null);
+    renderCostModalPicks();
+    renderModelTile();
+  });
+});
+document.querySelectorAll('.cost-effort-pick').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const raw = btn.getAttribute('data-effort') || '';
+    setSessionEffort(raw || null);
+    renderCostModalPicks();
+  });
+});
 
 function toggleCost() {
   if (costEls.panel.hidden) {
@@ -1712,16 +2484,35 @@ async function setSessionModel(modelId) {
   }
 }
 
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+async function setSessionEffort(effort) {
+  if (!state.sessionId) return;
+  try {
+    await api(`api/sessions/${state.sessionId}/effort`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ effort: effort || null }),
+    });
+    const label = effort || 'Default';
+    appendSystem(`Effort set to ${label}. Takes effect on the next message.`);
+    const s = state.sessions.find(x => x.id === state.sessionId);
+    if (s) s.effort = effort || null;
+  } catch (err) {
+    appendSystem(`Set effort failed: ${err.message}`);
+  }
+}
+
 async function summarizeFresh() {
   if (!state.sessionId) return;
-  if (!confirm('Summarize this chat and continue in a new one? Old chat stays in the list.')) return;
-  appendSystem('Summarizing…');
+  if (!confirm('Summarise this chat and continue in a new one? Old chat stays in the list.')) return;
+  appendSystem('Summarising…');
   try {
     const s = await api(`api/sessions/${state.sessionId}/summarize_fresh`, { method: 'POST' });
     await loadAll();
     selectSession(s.id);
   } catch (err) {
-    appendSystem(`Summarize failed: ${err.message}`);
+    appendSystem(`Summarise failed: ${err.message}`);
   }
 }
 
@@ -1729,7 +2520,7 @@ chatActionsBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   const items = [];
   if (state.sessionId) {
-    items.push({ label: 'Summarize & start fresh', action: summarizeFresh });
+    items.push({ label: 'Summarise & start fresh', action: summarizeFresh });
     items.push({ label: 'Clear context', danger: true, action: clearContext });
   }
   if (!items.length) return;
@@ -1812,6 +2603,7 @@ async function submit() {
   if (!text && state.attachments.length === 0) return;
   els.input.value = '';
   els.input.style.height = 'auto';
+  if (state.sessionId) localStorage.removeItem(`draft_${state.sessionId}`);
   try {
     await sendMessage(text);
     clearAttachments();

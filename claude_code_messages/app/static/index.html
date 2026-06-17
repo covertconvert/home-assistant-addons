@@ -32,26 +32,38 @@
 
 <div id="app" hidden>
   <header id="topbar">
-    <button id="drawer-toggle" aria-label="Sessions">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="3" y="4" width="18" height="16" rx="2"></rect>
-        <line x1="9" y1="4" x2="9" y2="20"></line>
+    <!-- Left: hamburger in floating circle -->
+    <button id="drawer-toggle" class="topbar-ham" aria-label="Sessions">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
       </svg>
     </button>
-    <h1 id="session-title">New conversation</h1>
-    <button id="usage-ring-btn" class="usage-meter usage-ring" aria-label="View usage" title="Usage">
-      <svg viewBox="0 0 36 36" width="22" height="22" aria-hidden="true">
-        <circle cx="18" cy="18" r="14" fill="none" stroke="currentColor" stroke-opacity="0.22" stroke-width="3"/>
-        <circle class="ring-fill" cx="18" cy="18" r="14" fill="none" stroke="currentColor" stroke-width="3"
-                pathLength="100" stroke-dasharray="0 100" stroke-linecap="round"
-                transform="rotate(-90 18 18)"/>
-      </svg>
-    </button>
-    <div class="split-btn">
-      <button id="new-session" class="new-chat-btn split-main" aria-label="New chat">New Chat</button>
-      <button id="chat-actions" class="split-caret" aria-label="Chat actions" aria-haspopup="menu">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="6 9 12 15 18 9"></polyline>
+    <!-- Centre: session name pill + model pill -->
+    <div class="topbar-centre">
+      <button id="session-title" aria-label="Rename conversation">New conversation</button>
+      <div class="model-pill">
+        <button id="usage-ring-btn" class="usage-meter usage-ring-mini" aria-label="View usage">
+          <svg viewBox="0 0 36 36" width="19" height="19" aria-hidden="true">
+            <circle cx="18" cy="18" r="14" fill="none" stroke="currentColor" stroke-opacity="0.25" stroke-width="4.5"/>
+            <circle class="ring-fill" cx="18" cy="18" r="14" fill="none" stroke="currentColor" stroke-width="4.5"
+                    pathLength="100" stroke-dasharray="0 100" stroke-linecap="round"
+                    transform="rotate(-90 18 18)"/>
+          </svg>
+        </button>
+        <span id="topbar-model-label">Claude</span>
+      </div>
+    </div>
+    <!-- Right: floating split button (pencil = new chat | chevron = options) -->
+    <div class="topbar-split">
+      <button id="new-session" aria-label="New chat">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+        </svg>
+      </button>
+      <div class="topbar-divider"></div>
+      <button id="chat-actions" aria-label="Chat actions" aria-haspopup="menu">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
     </div>
@@ -59,7 +71,29 @@
 
   <aside id="drawer" hidden>
     <div class="drawer-head">
-      <span>Conversations</span>
+      <div class="drawer-search">
+        <input id="drawer-search" type="search" inputmode="search"
+               autocomplete="off" autocorrect="off" autocapitalize="off"
+               spellcheck="false" placeholder="Search conversations…">
+        <button id="drawer-search-clear" hidden aria-label="Clear search">&times;</button>
+      </div>
+      <button id="drawer-close" class="drawer-return" aria-label="Return to conversation" title="Return to conversation">
+        <svg viewBox="328 64 36 34" width="26" height="26" aria-hidden="true">
+          <path d="M335 67 h12 a4 4 0 0 1 4 4 v8 a4 4 0 0 1 -4 4 h-7 l-4 4 v-4 h-1 a4 4 0 0 1 -4 -4 v-8 a4 4 0 0 1 4 -4 z" fill="#fff"/>
+          <line x1="338" y1="72" x2="347" y2="72" stroke="#c0623e" stroke-width="1.6" stroke-linecap="round"/>
+          <line x1="338" y1="76" x2="345" y2="76" stroke="#c0623e" stroke-width="1.6" stroke-linecap="round"/>
+          <path d="M345 76 h11 a4 4 0 0 1 4 4 v7 a4 4 0 0 1 -4 4 h-1 v4 l-4 -4 h-6 a4 4 0 0 1 -4 -4 v-7 a4 4 0 0 1 4 -4 z" fill="#fff" stroke="#c0623e" stroke-width="1.5"/>
+          <g stroke="#c0623e" stroke-width="1.5" stroke-linecap="round">
+            <line x1="351.5" y1="80" x2="351.5" y2="91"/>
+            <line x1="346" y1="85.5" x2="357" y2="85.5"/>
+            <line x1="347.7" y1="81.7" x2="355.3" y2="89.3"/>
+            <line x1="355.3" y1="81.7" x2="347.7" y2="89.3"/>
+          </g>
+        </svg>
+      </button>
+    </div>
+    <div id="drawer-body"></div>
+    <div class="drawer-foot">
       <div class="split-btn">
         <button id="new-session-drawer" class="new-chat-btn split-main" aria-label="New chat">New Chat</button>
         <button id="new-session-more" class="split-caret" aria-label="More create options" aria-haspopup="menu">
@@ -74,15 +108,7 @@
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
       </button>
-      <button id="drawer-close" aria-label="Close">&times;</button>
     </div>
-    <div class="drawer-search">
-      <input id="drawer-search" type="search" inputmode="search"
-             autocomplete="off" autocorrect="off" autocapitalize="off"
-             spellcheck="false" placeholder="Search conversations…">
-      <button id="drawer-search-clear" hidden aria-label="Clear search">&times;</button>
-    </div>
-    <div id="drawer-body"></div>
   </aside>
 
   <div id="action-menu" hidden></div>
@@ -242,6 +268,21 @@
         <button id="settings-save" class="primary">Save settings</button>
         <p class="setting-status" id="settings-status" hidden></p>
         <button id="security-policy-open" class="link-button" type="button">View the app's built-in security policy</button>
+        <button id="audit-log-open" class="link-button" type="button">View audit log</button>
+        <div class="log-mgmt">
+          <div class="log-mgmt-head">Audit log</div>
+          <p class="setting-help" id="log-info-text">Loading…</p>
+          <label class="field-row">
+            <span>Keep logs for</span>
+            <select id="log-retention-days">
+              <option value="7">7 days</option>
+              <option value="30">30 days</option>
+              <option value="90">90 days</option>
+              <option value="0">Forever</option>
+            </select>
+          </label>
+          <p class="setting-help">Entries older than this are removed when you save settings or when the addon restarts.</p>
+        </div>
         <hr class="settings-divider">
         <div class="danger-zone">
           <div class="danger-zone-head">Danger zone</div>
@@ -324,6 +365,109 @@
     </div>
   </aside>
 
+  <aside id="audit-modal" hidden>
+    <div class="modal-card">
+      <header class="modal-head">
+        <span>Audit Log</span>
+        <button id="audit-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <div class="audit-filter-bar" role="group" aria-label="Time range">
+          <button class="audit-filter-btn audit-filter-active" data-since="86400">24h</button>
+          <button class="audit-filter-btn" data-since="604800">7 days</button>
+          <button class="audit-filter-btn" data-since="2592000">30 days</button>
+          <button class="audit-filter-btn" data-since="0">All time</button>
+        </div>
+        <div class="audit-stats" id="audit-stats"></div>
+        <details class="audit-section" open>
+          <summary>Files accessed by Claude</summary>
+          <ul id="audit-files-list" class="audit-list"></ul>
+        </details>
+        <details class="audit-section" open>
+          <summary>Attachments you shared</summary>
+          <ul id="audit-uploads-list" class="audit-list"></ul>
+        </details>
+        <details class="audit-section" open>
+          <summary>Bash commands</summary>
+          <ul id="audit-bash-list" class="audit-list"></ul>
+        </details>
+        <div class="audit-log-section">
+          <div class="audit-log-head">
+            <span>Activity log</span>
+            <input type="search" id="audit-search" placeholder="Search…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+          </div>
+          <ul id="audit-entries-list" class="audit-log-entries"></ul>
+          <p id="audit-entries-status" class="setting-help" hidden></p>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <aside id="blocked-modal" hidden>
+    <div class="modal-card">
+      <header class="modal-head">
+        <span id="blocked-title">Blocked actions</span>
+        <button id="blocked-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <p class="setting-help" id="blocked-desc"></p>
+        <ul id="blocked-list" class="audit-list"></ul>
+      </div>
+    </div>
+  </aside>
+
+  <aside id="plan-view-modal" hidden>
+    <div class="modal-card">
+      <header class="modal-head">
+        <span id="plan-view-title">Saved Plan</span>
+        <button id="plan-view-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <p class="setting-help">
+          This plan was saved from a previous conversation. Loading it opens a new
+          chat in plan mode — Claude will review it with you and ask what you'd like to do.
+        </p>
+        <div id="plan-view-content" class="plan-view-content"></div>
+        <button id="plan-view-load" class="primary">Load into new chat</button>
+      </div>
+    </div>
+  </aside>
+
+  <aside id="plan-name-modal" hidden>
+    <div class="modal-card">
+      <header class="modal-head">
+        <span>Save plan for later</span>
+        <button id="plan-name-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <p class="setting-help">Give this plan a name so you can find it later.</p>
+        <label class="field-row">
+          <span>Plan name</span>
+          <input type="text" id="plan-name-input" placeholder="e.g. Refactor auth module" autocomplete="off">
+        </label>
+        <button id="plan-name-save" class="primary">Save</button>
+        <p class="setting-status" id="plan-name-status" hidden></p>
+      </div>
+    </div>
+  </aside>
+
+  <aside id="rename-modal" hidden>
+    <div class="modal-card">
+      <header class="modal-head">
+        <span>Rename conversation</span>
+        <button id="rename-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <label class="field-row">
+          <span>Chat name</span>
+          <input type="text" id="rename-input" placeholder="Conversation name" autocomplete="off" maxlength="50">
+          <span id="rename-count" class="char-count" aria-live="polite">0/50 characters</span>
+        </label>
+        <button id="rename-save" class="primary">Save</button>
+      </div>
+    </div>
+  </aside>
+
   <aside id="project-notes-modal" hidden>
     <div class="modal-card">
       <header class="modal-head">
@@ -346,7 +490,7 @@
   <aside id="cost-modal" hidden>
     <div class="modal-card">
       <header class="modal-head">
-        <span>Usage</span>
+        <span>Usage &amp; Model</span>
         <button id="cost-close" aria-label="Close">&times;</button>
       </header>
       <div class="modal-body">
@@ -361,6 +505,22 @@
           <div class="usage-sub" id="usage-7d-reset">Resets —</div>
         </div>
         <p class="setting-help" id="usage-note">Pulled live from Anthropic. Each check uses a few tokens.</p>
+        <div class="usage-section-head">Model</div>
+        <div class="cost-model-picks">
+          <button class="cost-model-pick" data-model="">Auto</button>
+          <button class="cost-model-pick" data-model="claude-opus-4-8">Opus 4.8</button>
+          <button class="cost-model-pick" data-model="claude-sonnet-4-6">Sonnet 4.6</button>
+          <button class="cost-model-pick" data-model="claude-haiku-4-5-20251001">Haiku 4.5</button>
+        </div>
+        <div class="usage-section-head">Effort</div>
+        <div class="cost-effort-picks">
+          <button class="cost-effort-pick" data-effort="">Default</button>
+          <button class="cost-effort-pick" data-effort="low">Low</button>
+          <button class="cost-effort-pick" data-effort="medium">Medium</button>
+          <button class="cost-effort-pick" data-effort="high">High</button>
+          <button class="cost-effort-pick" data-effort="xhigh">X-High</button>
+          <button class="cost-effort-pick" data-effort="max">Max</button>
+        </div>
       </div>
     </div>
   </aside>
@@ -396,8 +556,15 @@
       </button>
       <input type="file" id="file-input" accept="image/*" hidden multiple>
       <textarea id="input" rows="1" placeholder="Message Claude…"></textarea>
-      <button id="stop" hidden aria-label="Stop">&#9632;</button>
-      <button id="send" aria-label="Send">&#10148;</button>
+      <button id="stop" hidden aria-label="Stop">
+        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="3" fill="currentColor"/></svg>
+      </button>
+      <button id="send" aria-label="Send">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="12" y1="18" x2="12" y2="6"></line>
+          <polyline points="7 11 12 6 17 11"></polyline>
+        </svg>
+      </button>
     </div>
     <div id="composer-panel" hidden role="group" aria-label="More options" data-view="main">
       <div class="cp-view cp-view-main">
@@ -419,37 +586,6 @@
             </svg>
           </span>
           <span class="cp-label">Plan mode</span>
-        </button>
-        <button class="cp-option" id="cp-model" type="button">
-          <span class="cp-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="5" y="5" width="14" height="14" rx="2"></rect>
-              <rect x="9" y="9" width="6" height="6"></rect>
-              <line x1="9" y1="2" x2="9" y2="5"></line>
-              <line x1="15" y1="2" x2="15" y2="5"></line>
-              <line x1="9" y1="19" x2="9" y2="22"></line>
-              <line x1="15" y1="19" x2="15" y2="22"></line>
-              <line x1="19" y1="9" x2="22" y2="9"></line>
-              <line x1="19" y1="15" x2="22" y2="15"></line>
-              <line x1="2" y1="9" x2="5" y2="9"></line>
-              <line x1="2" y1="15" x2="5" y2="15"></line>
-            </svg>
-          </span>
-          <span class="cp-label">Model</span>
-        </button>
-      </div>
-      <div class="cp-view cp-view-models" hidden>
-        <button class="cp-option cp-model-pick" type="button" data-model="">
-          <span class="cp-label">Auto</span>
-        </button>
-        <button class="cp-option cp-model-pick" type="button" data-model="claude-opus-4-8">
-          <span class="cp-label">Opus 4.8</span>
-        </button>
-        <button class="cp-option cp-model-pick" type="button" data-model="claude-sonnet-4-6">
-          <span class="cp-label">Sonnet 4.6</span>
-        </button>
-        <button class="cp-option cp-model-pick" type="button" data-model="claude-haiku-4-5-20251001">
-          <span class="cp-label">Haiku 4.5</span>
         </button>
       </div>
     </div>

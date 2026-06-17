@@ -133,6 +133,18 @@ def _translate(raw: dict) -> Iterator[dict]:
                 stripped = txt.lstrip()
                 if stripped.startswith("<local-command-") or stripped.startswith("<command-"):
                     continue
+                # CCM's synthetic "you were interrupted" instruction prefix —
+                # injected into the message sent to the CLI after a Stop, never
+                # meant for display. Strip from the tag through the end marker
+                # and keep the real user text that follows. Keep the markers in
+                # sync with INTERRUPT_NOTE_TAG / INTERRUPT_NOTE_END in session.py.
+                if stripped.startswith("[ccm-interrupt-note]"):
+                    end = stripped.find("[/ccm-interrupt-note]")
+                    if end == -1:
+                        continue  # malformed — drop the whole block
+                    txt = stripped[end + len("[/ccm-interrupt-note]"):].lstrip()
+                    if not txt:
+                        continue
                 text_parts.append(txt)
             elif btype == "image":
                 src = block.get("source", {}) or {}

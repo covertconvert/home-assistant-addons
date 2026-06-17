@@ -40,14 +40,15 @@ This app wraps the same `claude` CLI but gives it a proper chat UI: bubbles, cod
 ## Features
 
 - **OAuth login** — sign in with your Anthropic account; no API key required
-- **Multiple conversations** — drawer-based session list, each with its own context
-- **Plan mode** — per-conversation toggle to run Claude in read-only planning mode
+- **Multiple conversations** — drawer-based session list grouped under projects
+- **Plan mode** — per-conversation toggle to run Claude in read-only planning mode; save and reload plans from the drawer
+- **Model & effort** — switch model mid-chat and choose effort level (Low → Max) without starting a new session
 - **Image attachments** — paste from clipboard, pick from camera roll, or upload a file
-- **Markdown rendering** — fenced code blocks with copy buttons, bold/italic/lists/links
+- **Markdown + SVG rendering** — fenced code blocks with copy buttons, inline SVG diagrams with Download PNG
 - **Permission cards** — inline Approve / Always allow / Reject for Bash and WebFetch
 - **Stop button** — cancel mid-generation without killing the session
 - **Resume** — pick up a session after the CLI exits or the app restarts
-- **Audit log** — every tool call appended to `/config/claude-code-messages-audit.log`
+- **Audit dashboard** — browsable in-app audit log with retention controls; raw log at `/config/claude-code-messages-audit.log`
 - **Built-in security policy** — hard-coded rules that block forbidden file reads, destructive Bash, etc. Viewable in Settings.
 
 ## Installation
@@ -84,6 +85,7 @@ Then, if you want Claude to talk to Home Assistant (recommended):
 - **Ask before Bash** (default ON) — show a permission card before any shell command
 - **Ask before WebFetch** (default ON) — show a permission card before any outbound HTTP fetch
 - **Custom CLAUDE.md notes** — appended to the CLAUDE.md Claude sees, for project-wide guidance
+- **Audit log** — browse the tool-call audit log and set retention period
 - **View built-in security policy** — opens the hard-coded rules in a modal
 
 ## Security

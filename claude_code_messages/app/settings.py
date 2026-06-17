@@ -35,6 +35,8 @@ DEFAULTS: dict[str, Any] = {
     # service name like "notify.mobile_app_jons_iphone". Only fires when
     # the CCM tab is hidden at the moment `generation_ended` arrives.
     "notify_devices": [],
+    # Audit log retention in days. 0 = keep forever.
+    "log_retention_days": 90,
 }
 
 
@@ -129,6 +131,7 @@ def public_view(d: dict[str, Any]) -> dict[str, Any]:
         "bash_auto_allow": list(d.get("bash_auto_allow") or []),
         "safe_bash_commands": SAFE_BASH_COMMANDS,
         "notify_devices": list(d.get("notify_devices") or []),
+        "log_retention_days": int(d.get("log_retention_days") or 90),
     }
 
 

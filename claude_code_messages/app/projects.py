@@ -135,6 +135,19 @@ def delete(project_id: str) -> bool:
     return True
 
 
+def reorder(ids: list[str]) -> list[dict[str, Any]]:
+    projects = load()
+    by_id = {p["id"]: p for p in projects}
+    reordered = [by_id[i] for i in ids if i in by_id]
+    # Append any IDs not in the request (safety net) at the end.
+    seen = set(ids)
+    for p in projects:
+        if p["id"] not in seen:
+            reordered.append(p)
+    save(reordered)
+    return reordered
+
+
 def delete_all() -> int:
     """Wipe every project record. Returns the number deleted. Notes files
     under NOTES_DIR are left on disk so the user can recover them; only

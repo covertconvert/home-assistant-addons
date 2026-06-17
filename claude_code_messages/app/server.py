@@ -15,6 +15,7 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 import uuid
@@ -29,8 +30,11 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 import ha_events
+import plans as plans_store
 import projects as projects_store
 from audit import log as audit_log
+from audit import log_info as audit_log_info
+from audit import trim as audit_trim
 from auth import AuthFlow, is_authed, save_token
 from persistence import read_history, session_cost
 from session import Session, SessionManager, set_generation_ended_hook
@@ -44,7 +48,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_MB = 10
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Claude Code Messages", version="1.0.0")
+app = FastAPI(title="Claude Code Messages", version="0.1.0")
 manager = SessionManager(max_sessions=int(os.environ.get("MAX_SESSIONS", "20")))
 auth_flow: AuthFlow | None = None
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -58,6 +62,10 @@ pending_permissions: dict[str, asyncio.Future[str]] = {}
 # together) surface as serialized prompts instead of overlapping cards. The
 # second hook's HTTP request blocks at acquire() until the first resolves.
 session_permission_locks: dict[str, asyncio.Lock] = {}
+
+# session_id -> set of request_ids currently pending for that session. Used by
+# the interrupt handler to cancel futures and unblock the lock on Stop.
+session_pending_request_ids: dict[str, set[str]] = {}
 
 
 class CodeBody(BaseModel):
@@ -204,11 +212,15 @@ class SettingsBody(BaseModel):
     bash_auto_allow: list[str] | None = None
     # Full HA notify.* service names (e.g. notify.mobile_app_jons_iphone).
     notify_devices: list[str] | None = None
+    # Audit log retention in days. 0 = keep forever.
+    log_retention_days: int | None = None
 
 
 @app.get("/api/settings")
 async def get_settings() -> dict[str, Any]:
-    return settings_public_view(load_settings())
+    result = settings_public_view(load_settings())
+    result["log_info"] = await asyncio.to_thread(audit_log_info)
+    return result
 
 
 @app.post("/api/settings")
@@ -235,7 +247,12 @@ async def update_settings(body: SettingsBody) -> dict[str, Any]:
             s.strip() for s in body.notify_devices
             if isinstance(s, str) and s.strip().startswith("notify.")
         ]
+    if body.log_retention_days is not None:
+        new["log_retention_days"] = max(0, body.log_retention_days)
     save_settings(new)
+    retention = new.get("log_retention_days", 90)
+    if retention:
+        asyncio.create_task(asyncio.to_thread(audit_trim, retention))
     audit_log("settings", "settings_updated", {
         "ha_mcp_enabled": new["ha_mcp_enabled"],
         "ha_url_set": bool(new["ha_url"]),
@@ -543,6 +560,13 @@ async def _start_ha_listener() -> None:
     asyncio.create_task(ha_events.run_listener(load_settings))
 
 
+@app.on_event("startup")
+async def _trim_audit_log_on_start() -> None:
+    retention = load_settings().get("log_retention_days", 90)
+    if retention:
+        await asyncio.to_thread(audit_trim, retention)
+
+
 async def _on_generation_ended(sess: Session, evt: dict) -> None:
     """Server-side hook fired when any session emits a generation_ended event.
     Skips interrupted turns (user pressed Stop — not a "reply ready" signal)
@@ -643,6 +667,7 @@ async def delete_all_data() -> dict[str, int]:
     HA token, allowlist) are intentionally preserved."""
     n_sessions = await manager.delete_all()
     n_projects = projects_store.delete_all()
+    plans_store.delete_all()
     audit_log("data", "delete_all", {"sessions": n_sessions, "projects": n_projects})
     return {"sessions": n_sessions, "projects": n_projects}
 
@@ -689,6 +714,15 @@ async def create_project(body: ProjectBody) -> dict[str, Any]:
     return record
 
 
+class ReorderBody(BaseModel):
+    ids: list[str]
+
+
+@app.post("/api/projects/reorder")
+async def reorder_projects(body: ReorderBody) -> list[dict[str, Any]]:
+    return projects_store.reorder(body.ids)
+
+
 @app.patch("/api/projects/{project_id}")
 async def rename_project(project_id: str, body: ProjectBody) -> dict[str, Any]:
     record = projects_store.rename(project_id, body.name)
@@ -725,6 +759,64 @@ async def delete_project(project_id: str) -> dict[str, bool]:
             manager.update(sess.id, project_id=None)
     audit_log("projects", "project_deleted", {"id": project_id})
     return {"ok": True}
+
+
+# --- Saved plans -------------------------------------------------------------
+
+class SavePlanBody(BaseModel):
+    name: str
+    content: str
+
+
+@app.get("/api/plans")
+async def list_plans() -> list[dict]:
+    return plans_store.load()
+
+
+@app.post("/api/plans")
+async def save_plan(body: SavePlanBody) -> dict:
+    name = body.name.strip()
+    content = body.content.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if not content:
+        raise HTTPException(status_code=400, detail="content is required")
+    record = plans_store.create(name, content)
+    audit_log("plans", "plan_saved", {"id": record["id"], "name": name})
+    return record
+
+
+@app.delete("/api/plans/{plan_id}")
+async def delete_plan(plan_id: str) -> dict[str, bool]:
+    if not plans_store.delete(plan_id):
+        raise HTTPException(status_code=404, detail="Plan not found")
+    audit_log("plans", "plan_deleted", {"id": plan_id})
+    return {"ok": True}
+
+
+@app.post("/api/plans/{plan_id}/load")
+async def load_plan(plan_id: str) -> dict:
+    """Open a new plan-mode session seeded with a saved plan."""
+    all_plans = plans_store.load()
+    plan = next((p for p in all_plans if p["id"] == plan_id), None)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    new = await manager.create(
+        title=plan["name"],
+        permission_mode="plan",
+    )
+    seed = (
+        "[Note for Claude — this message is from the app, not the user]\n"
+        "The user has loaded a saved plan from a previous conversation. "
+        "Read the plan below, then ask what they would like to do — "
+        "refine it further, or approve it so you can start implementing.\n\n"
+        f"=== Saved Plan: {plan['name']} ===\n"
+        f"{plan['content']}\n"
+        "=== End of Plan ==="
+    )
+    await new.send_message(seed, [], silent=True)
+    audit_log("plans", "plan_loaded", {"plan_id": plan_id, "session_id": new.id})
+    return {"id": new.id, "title": new.title, "project_id": new.project_id, "model": new.model}
 
 
 @app.get("/api/sessions/{session_id}/stream")
@@ -791,6 +883,19 @@ async def set_model(session_id: str, body: ModelBody) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Session not found")
     audit_log(session_id, "model_changed", {"model": body.model})
     return {"id": sess.id, "model": sess.model}
+
+
+class EffortBody(BaseModel):
+    effort: str | None = None
+
+
+@app.post("/api/sessions/{session_id}/effort")
+async def set_effort(session_id: str, body: EffortBody) -> dict[str, Any]:
+    sess = await manager.set_effort(session_id, body.effort)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    audit_log(session_id, "effort_changed", {"effort": body.effort})
+    return {"id": sess.id, "effort": sess.effort}
 
 
 class PermissionModeBody(BaseModel):
@@ -894,15 +999,15 @@ async def summarize_fresh(session_id: str) -> dict[str, Any]:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 payload = _json.loads(resp.read())
         except urllib.error.HTTPError as e:
-            raise HTTPException(status_code=502, detail=f"Summarize: {e.code} {e.reason}") from e
+            raise HTTPException(status_code=502, detail=f"Summarise: {e.code} {e.reason}") from e
         except urllib.error.URLError as e:
-            raise HTTPException(status_code=502, detail=f"Summarize: {e.reason}") from e
+            raise HTTPException(status_code=502, detail=f"Summarise: {e.reason}") from e
         parts = [b.get("text", "") for b in (payload.get("content") or []) if b.get("type") == "text"]
         return "".join(parts).strip()
 
     summary = await asyncio.to_thread(_summarize)
     if not summary:
-        raise HTTPException(status_code=502, detail="Summarize returned no text")
+        raise HTTPException(status_code=502, detail="Summarise returned no text")
 
     new = await manager.create(
         title=f"{src.title} (continued)",
@@ -993,6 +1098,14 @@ async def interrupt(session_id: str) -> dict[str, bool]:
     if sess.proc is None:
         return {"ok": True}  # nothing to interrupt
     await sess.interrupt()
+    # Cancel any permission futures waiting for user input. This releases the
+    # session lock so the next generation can prompt normally, and tells the
+    # frontend to remove stale cards.
+    for req_id in list(session_pending_request_ids.pop(session_id, set())):
+        fut = pending_permissions.pop(req_id, None)
+        if fut and not fut.done():
+            fut.cancel()
+        await sess._emit({"type": "permission_resolved", "id": req_id})
     audit_log(session_id, "interrupt", {})
     return {"ok": True}
 
@@ -1190,6 +1303,7 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[str] = loop.create_future()
         pending_permissions[request_id] = fut
+        session_pending_request_ids.setdefault(body.session_id, set()).add(request_id)
 
         import json as _json
         cmd = body.tool_input.get("command", "") if body.tool_name == "Bash" else ""
@@ -1239,7 +1353,10 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
         # holds its HTTP request open; the CLI proc sits idle until the user
         # approves, denies, or hits Stop. Hitting Stop kills the CLI which
         # cleans up the hook subprocess.
-        decision = await fut
+        try:
+            decision = await fut
+        finally:
+            session_pending_request_ids.get(body.session_id, set()).discard(request_id)
 
     if decision == "allow_domain" and host:
         try:
@@ -1353,16 +1470,162 @@ async def upload(session_id: str, file: UploadFile = File(...)) -> dict[str, str
                 dest.unlink(missing_ok=True)
                 raise HTTPException(status_code=413, detail="File too large")
             await out.write(chunk)
-    audit_log(session_id, "upload", {"path": str(dest), "size": size})
+    audit_log(session_id, "upload", {"path": str(dest), "size": size, "original_name": file.filename or ""})
     return {"path": str(dest), "name": name}
 
 
 def _safe_json(evt: dict) -> str:
-    import json
     try:
         return json.dumps(evt)
     except (TypeError, ValueError):
         return json.dumps({"type": "error", "data": "unserialisable event"})
+
+
+# --- Audit log reader --------------------------------------------------------
+
+def _build_audit_summary(entries: list) -> dict:
+    from collections import Counter, defaultdict
+
+    bash_cmds: Counter = Counter()
+    bash_blocked: set = set()
+    files: dict = defaultdict(lambda: {"reads": 0, "writes": 0})
+    uploads: list = []
+    blocked_events: list = []
+    event_counts: Counter = Counter()
+    blocked_count = 0
+
+    WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+    for e in entries:
+        etype = e.get("type", "")
+        event_counts[etype] += 1
+        payload = e.get("payload", {}) or {}
+
+        if etype == "hook_allow":
+            tool = payload.get("tool", "")
+            inp = payload.get("input", {}) or {}
+            if tool == "Bash":
+                cmd = inp.get("command", "").strip()
+                if cmd:
+                    bash_cmds[cmd[:200]] += 1
+            elif tool == "Read":
+                path = inp.get("file_path", "")
+                if path:
+                    files[path]["reads"] += 1
+            elif tool in WRITE_TOOLS:
+                path = inp.get("file_path", "")
+                if path:
+                    files[path]["writes"] += 1
+
+        elif etype == "hook_block":
+            blocked_count += 1
+            reason = payload.get("reason", "")
+            inner = (payload.get("payload", {}) or {})
+            tool = inner.get("tool", "")
+            inp = inner.get("input", {}) or {}
+            if tool == "Bash":
+                cmd = inp.get("command", "").strip()
+                if cmd:
+                    bash_cmds[cmd[:200]] += 1
+                    bash_blocked.add(cmd[:200])
+            # Categorise: user-driven rejection vs hard security rule
+            user_rejected = reason.startswith("user rejected") or reason == "plan_refine_requested"
+            category = "user" if user_rejected else "rules"
+            if tool == "Bash":
+                detail = inp.get("command", "")[:150]
+            elif tool in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit"):
+                detail = inp.get("file_path", "")
+            elif tool == "WebFetch":
+                detail = inp.get("url", inp.get("URL", ""))[:150]
+            else:
+                detail = tool or reason[:150]
+            blocked_events.append({
+                "ts": e.get("ts", 0),
+                "tool": tool,
+                "detail": detail,
+                "reason": reason,
+                "category": category,
+            })
+
+        elif etype == "upload":
+            path = payload.get("path", "")
+            size = payload.get("size", 0)
+            original_name = payload.get("original_name", "")
+            if path:
+                uploads.append({"path": path, "size": size, "original_name": original_name, "ts": e.get("ts", 0)})
+
+    top_bash = [
+        {"cmd": cmd, "count": count, "blocked": cmd in bash_blocked}
+        for cmd, count in bash_cmds.most_common(30)
+    ]
+
+    file_list = [
+        {"path": path, "reads": counts["reads"], "writes": counts["writes"]}
+        for path, counts in sorted(
+            files.items(),
+            key=lambda x: x[1]["reads"] + x[1]["writes"],
+            reverse=True,
+        )
+    ]
+
+    user_blocked  = [e for e in blocked_events if e["category"] == "user"]
+    rules_blocked = [e for e in blocked_events if e["category"] == "rules"]
+
+    return {
+        "total_tool_calls": event_counts.get("hook_allow", 0) + event_counts.get("hook_block", 0),
+        "blocked_count": blocked_count,
+        "user_blocked_count": len(user_blocked),
+        "rules_blocked_count": len(rules_blocked),
+        "blocked_events": sorted(blocked_events, key=lambda x: x["ts"], reverse=True),
+        "bash_commands": top_bash,
+        "files": file_list,
+        "uploads": sorted(uploads, key=lambda x: x["ts"], reverse=True)[:50],
+        "event_counts": dict(event_counts),
+    }
+
+
+@app.get("/api/audit")
+async def get_audit(
+    search: str | None = None,
+    since: float | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict:
+    """Return parsed audit log with summary + paginated entries."""
+    from audit import AUDIT_LOG_PATH
+
+    all_entries: list = []
+    if AUDIT_LOG_PATH.exists():
+        try:
+            async with aiofiles.open(AUDIT_LOG_PATH, encoding="utf-8") as f:
+                async for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        all_entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        except OSError:
+            pass
+
+    # Date filter applies to both summary and log view
+    if since is not None:
+        all_entries = [e for e in all_entries if e.get("ts", 0) >= since]
+
+    summary = _build_audit_summary(all_entries)
+
+    # Search filter applies to log view only
+    if search:
+        sl = search.lower()
+        display_entries = [e for e in all_entries if sl in json.dumps(e).lower()]
+    else:
+        display_entries = all_entries
+
+    total = len(display_entries)
+    page = list(reversed(display_entries))[offset: offset + limit]
+
+    return {"total": total, "entries": page, "summary": summary}
 
 
 if __name__ == "__main__":

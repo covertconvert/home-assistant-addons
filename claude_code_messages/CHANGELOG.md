@@ -2,6 +2,56 @@
 
 All notable changes for **Claude Code Messages**. Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.0] — 2026-06-17
+
+### Chat & generation
+
+- SVG fenced code blocks render inline in chat; Download PNG button exports any diagram
+- Context compaction surfaces in the UI with a "Summarising…" caption and a post-compaction banner so it's never silent
+- Resume banner shown when a conversation continues after an unexpected CLI respawn
+- Per-session draft persistence — your unsent message is restored when you switch back to a chat
+- Tap the chat title in the topbar to rename inline without opening a menu
+- Chat titles auto-capped and trimmed to word boundaries; live character counter on the rename field
+
+### Drawer & sessions
+
+- Saved Plans — save, browse, and reload plan-mode plans directly from the drawer
+- Project reordering via up/down actions in the project context menu
+- Session cards show last-activity date in the subtitle
+
+### Usage & model
+
+- Usage & Model panel replaces the old cost modal — model picker and effort selector in one place
+- Switch model mid-chat without starting a new session
+- Effort level selector: Low / Medium / High / XHigh / Max
+
+### Permission & security
+
+- Permission cards restyled — orange "Permission Required" header, bordered card, compact pill buttons (Allow once / Trust Bash this turn / Reject)
+- Blocked tool modal splits the count into "you rejected" vs "security rule" chips with per-category titles
+- Audit dashboard in Settings — browsable log with retention controls
+
+### UI redesign
+
+- Floating transparent topbar — frosted background with session name + model pill stacked at centre; split button (✎ new chat | ▾ menu)
+- Model pill shows a live usage doughnut (green → amber → red by zone) and opens the Usage & Model modal on tap
+- Modernised drawer — frosted search pill, twin-bubble "return to conversation" button, pinned new-chat + settings footer
+- Session list as frosted rounded cards per group; accent-filled active row; pill count badges on projects
+- Action menu: centred full-bleed rows; destructive actions (Clear context, Delete) shown with red fill and border
+- Compose: pale blue send arrow + pale red stop square
+- Softer blue-grey slate dark theme — cards lift gently against the background
+
+### Reliability
+
+- Mobile stall fix — client staleness watchdog + `visibilitychange` reconnect; fixes silent stream death on mobile that only recovered by switching chats
+- Pending permission cards re-rendered on reconnect so they're never silently lost
+- Stop button no longer disappears mid-stream during an interrupt
+- Large output crash fix (parser crashed on very long CLI output lines)
+- "No response requested" phantom message eliminated (root cause: CLI's built-in resume prompt)
+- Optimistic stop — UI updates immediately on tap, doesn't wait for SSE confirmation
+
+---
+
 ## [1.0.0] — 2026-06-13
 
 First public release. Carries everything below.
