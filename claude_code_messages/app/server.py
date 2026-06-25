@@ -17,17 +17,20 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 import aiofiles
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import httpx
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import ha_events
 import plans as plans_store
@@ -36,7 +39,7 @@ from audit import log as audit_log
 from audit import log_info as audit_log_info
 from audit import trim as audit_trim
 from auth import AuthFlow, is_authed, save_token
-from persistence import read_history, session_cost
+from persistence import read_history, session_cost, session_latest_input_tokens
 from session import Session, SessionManager, set_generation_ended_hook
 from settings import add_webfetch_domain
 from settings import load as load_settings
@@ -48,7 +51,52 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_MB = 10
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+# ── HA bearer-token auth (for direct API access from iOS / external clients) ──
+# Requests arriving via HA ingress are already authenticated by HA's proxy layer
+# and carry no Authorization header — we let those through untouched.
+# Requests with Authorization: Bearer <ha-token> (e.g. from the iOS app via
+# Nabu Casa) are validated once against the HA REST API and cached for 60 s.
+_HA_CORE_URL = "http://homeassistant:8123/api/"
+_TOKEN_CACHE_TTL = 60
+_token_cache: dict[str, tuple[bool, float]] = {}
+_EXEMPT_PATHS = {"/", "/healthz"}
+_EXEMPT_PREFIXES = ("/static/", "/api/auth/")
+
+
+async def _validate_ha_token(token: str) -> bool:
+    now = time.monotonic()
+    if token in _token_cache:
+        valid, expires = _token_cache[token]
+        if now < expires:
+            return valid
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                _HA_CORE_URL, headers={"Authorization": f"Bearer {token}"}
+            )
+        valid = resp.status_code == 200
+    except Exception:
+        valid = False
+    _token_cache[token] = (valid, now + _TOKEN_CACHE_TTL)
+    return valid
+
+
+class _HABearerAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if path in _EXEMPT_PATHS or any(path.startswith(p) for p in _EXEMPT_PREFIXES):
+            return await call_next(request)
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            # No Bearer header → ingress request, already authenticated by HA.
+            return await call_next(request)
+        if not await _validate_ha_token(auth[7:]):
+            return JSONResponse({"detail": "Invalid or expired HA token"}, status_code=401)
+        return await call_next(request)
+
+
 app = FastAPI(title="Claude Code Messages", version="0.1.0")
+app.add_middleware(_HABearerAuthMiddleware)
 manager = SessionManager(max_sessions=int(os.environ.get("MAX_SESSIONS", "20")))
 auth_flow: AuthFlow | None = None
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -214,6 +262,8 @@ class SettingsBody(BaseModel):
     notify_devices: list[str] | None = None
     # Audit log retention in days. 0 = keep forever.
     log_retention_days: int | None = None
+    destructive_protected_integrations: list[str] | None = None
+    destructive_entity_threshold: int | None = None
 
 
 @app.get("/api/settings")
@@ -249,6 +299,13 @@ async def update_settings(body: SettingsBody) -> dict[str, Any]:
         ]
     if body.log_retention_days is not None:
         new["log_retention_days"] = max(0, body.log_retention_days)
+    if body.destructive_protected_integrations is not None:
+        new["destructive_protected_integrations"] = [
+            s.strip().lower() for s in body.destructive_protected_integrations
+            if isinstance(s, str) and s.strip()
+        ]
+    if body.destructive_entity_threshold is not None:
+        new["destructive_entity_threshold"] = max(1, body.destructive_entity_threshold)
     save_settings(new)
     retention = new.get("log_retention_days", 90)
     if retention:
@@ -294,6 +351,105 @@ def _ha_request(url: str, token: str, *, method: str = "GET",
             return _json.loads(raw.decode("utf-8"))
         except ValueError:
             return raw.decode("utf-8", errors="replace")
+
+
+_MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "claude-opus-4-8": 200_000,
+    "claude-opus-4-7": 200_000,
+    "claude-sonnet-4-6": 200_000,
+    "claude-haiku-4-5-20251001": 200_000,
+}
+_DEFAULT_CONTEXT_WINDOW = 200_000
+
+
+def _fetch_config_entries(url: str, token: str) -> list[dict]:
+    """Fetch all config entries from HA. Returns [] on any error."""
+    try:
+        result = _ha_request(f"{url}/api/config/config_entries/entry", token, timeout=5.0)
+        return result if isinstance(result, list) else []
+    except Exception:
+        return []
+
+
+def _fetch_entity_count_for_entry(url: str, token: str, entry_id: str) -> int:
+    """Count entity registry entries belonging to a config entry. Returns 0 on error."""
+    for path in ("/api/config/entity_registry/list", "/api/config/entity_registry"):
+        try:
+            entities = _ha_request(f"{url}{path}", token, timeout=5.0)
+            if isinstance(entities, list):
+                return sum(1 for e in entities if isinstance(e, dict) and e.get("config_entry_id") == entry_id)
+        except Exception:
+            continue
+    return 0
+
+
+_DESTRUCTIVE_SERVICE_WORDS = frozenset({"remove", "delete", "clear", "purge", "wipe", "reset"})
+_UUID_RE = re.compile(r'^[0-9a-f]{32}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+
+
+def _is_destructive_service(service: str) -> bool:
+    return any(w in service.lower() for w in _DESTRUCTIVE_SERVICE_WORDS)
+
+
+def _extract_entry_id(data: dict) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    for key in ("entry_id", "config_entry_id"):
+        val = data.get(key)
+        if isinstance(val, str) and _UUID_RE.match(val.replace("-", "")):
+            return val
+    return None
+
+
+async def _enrich_destructive_call(tool_name: str, tool_input: dict) -> dict:
+    """For ha_call_service calls that look destructive, resolve the config entry
+    and compute consequence text + type-to-confirm name. Returns {} if not applicable."""
+    if tool_name != "mcp__home-assistant__ha_call_service":
+        return {}
+    service = (tool_input.get("service") or "").strip()
+    if not _is_destructive_service(service):
+        return {}
+    data = tool_input.get("service_data") or tool_input.get("data") or {}
+    entry_id = _extract_entry_id(data)
+    if not entry_id:
+        return {"destructive": True}
+
+    s = load_settings()
+    url = (s.get("ha_url") or "").strip()
+    token = (s.get("ha_token") or "").strip()
+    if not url or not token:
+        return {"destructive": True}
+
+    try:
+        entries = await asyncio.to_thread(_fetch_config_entries, url, token)
+        entry = next((e for e in entries if e.get("entry_id") == entry_id), None)
+        if not entry:
+            return {"destructive": True}
+
+        entry_title = entry.get("title") or entry.get("domain") or entry_id
+        entry_domain = (entry.get("domain") or "").lower()
+
+        entity_count = await asyncio.to_thread(_fetch_entity_count_for_entry, url, token, entry_id)
+
+        consequence = f"This will remove the {entry_title} integration"
+        if entity_count > 0:
+            noun = "entity" if entity_count == 1 else "entities"
+            consequence += f" and {entity_count} associated {noun}"
+
+        protected = set(s.get("destructive_protected_integrations") or [])
+        threshold = int(s.get("destructive_entity_threshold") or 25)
+        needs_type_confirm = (entry_domain in protected) or (entity_count >= threshold)
+
+        result: dict = {
+            "destructive": True,
+            "consequence": consequence,
+            "entry_title": entry_title,
+        }
+        if needs_type_confirm:
+            result["confirm_name"] = entry_title
+        return result
+    except Exception:
+        return {"destructive": True}
 
 
 class HaTestBody(BaseModel):
@@ -359,6 +515,24 @@ async def list_notify_targets() -> list[dict[str, str]]:
                     out.append({"service": f"notify.{svc_name}", "label": pretty})
     out.sort(key=lambda x: x["label"])
     return out
+
+
+@app.get("/api/ha/config_entries")
+async def list_ha_config_entries() -> list[dict]:
+    """List config entries for the destructive-ops settings UI (validation + picker)."""
+    s = load_settings()
+    url = (s.get("ha_url") or "").strip()
+    token = (s.get("ha_token") or "").strip()
+    if not url or not token:
+        return []
+    try:
+        entries = await asyncio.to_thread(_fetch_config_entries, url, token)
+        return [
+            {"entry_id": e.get("entry_id"), "title": e.get("title"), "domain": e.get("domain")}
+            for e in entries if isinstance(e, dict) and e.get("entry_id")
+        ]
+    except Exception:
+        return []
 
 
 class TurnFinishedBody(BaseModel):
@@ -568,11 +742,25 @@ async def _trim_audit_log_on_start() -> None:
 
 
 async def _on_generation_ended(sess: Session, evt: dict) -> None:
-    """Server-side hook fired when any session emits a generation_ended event.
-    Skips interrupted turns (user pressed Stop — not a "reply ready" signal)
-    and suppresses the push if the client is actively focused on the session."""
+    """Server-side hook fired when any session emits a generation_ended event."""
     if evt.get("subtype") == "interrupted":
         return
+
+    # Emit context usage so the frontend can warn before context fills up.
+    # Fires regardless of focus state — the user needs this signal even when active.
+    try:
+        latest_input = await asyncio.to_thread(session_latest_input_tokens, sess.id)
+        if latest_input > 0:
+            window = _MODEL_CONTEXT_WINDOWS.get(sess.model or "", _DEFAULT_CONTEXT_WINDOW)
+            await sess._emit({
+                "type": "context_usage",
+                "input_tokens": latest_input,
+                "context_window": window,
+                "pct": round(latest_input / window, 4),
+            })
+    except Exception:
+        pass
+
     if time.time() - sess.last_focused_at < FOCUS_FRESHNESS_SECONDS:
         return
     try:
@@ -933,11 +1121,17 @@ async def clear_context(session_id: str) -> dict[str, bool]:
 
 
 @app.get("/api/sessions/{session_id}/cost")
-async def get_cost(session_id: str) -> dict[str, int]:
+async def get_cost(session_id: str) -> dict[str, Any]:
     sess = manager.get(session_id)
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session_cost(session_id)
+    cost = await asyncio.to_thread(session_cost, session_id)
+    latest = await asyncio.to_thread(session_latest_input_tokens, session_id)
+    window = _MODEL_CONTEXT_WINDOWS.get(sess.model or "", _DEFAULT_CONTEXT_WINDOW)
+    cost["latest_input"] = latest
+    cost["context_window"] = window
+    cost["context_pct"] = round(latest / window, 4) if latest else 0
+    return cost
 
 
 @app.post("/api/sessions/{session_id}/summarize_fresh")
@@ -1146,7 +1340,7 @@ def _host_from_url(url: str) -> str:
         return ""
 
 
-def _mcp_card_text(tool_name: str, tool_input: dict) -> tuple[str, str]:
+def _mcp_card_text(tool_name: str, tool_input: dict, entry_title: str = "") -> tuple[str, str]:
     """Human-readable (title, body) for an MCP tool permission card.
 
     Falls back to the raw tool name + truncated JSON for shapes we don't
@@ -1199,8 +1393,9 @@ def _mcp_card_text(tool_name: str, tool_input: dict) -> tuple[str, str]:
 
         if domain and service:
             title = f"{domain}.{service}"
-            if target_str:
-                title += f" → {target_str}"
+            resolved = entry_title or target_str
+            if resolved:
+                title += f" → {resolved}"
             body = raw_json if data else (f"target: {target_str}" if target_str else "")
             return title, body
 
@@ -1236,8 +1431,11 @@ def _mcp_card_text(tool_name: str, tool_input: dict) -> tuple[str, str]:
             return (f"Save {domain} helper: {name}".strip(), raw_json)
         return ("Save helper", raw_json)
 
-    if tool_name == "mcp__home-assistant__ha_config_remove_helper":
-        hid = tool_input.get("helper_id") or ""
+    if tool_name in (
+        "mcp__home-assistant__ha_config_remove_helper",
+        "mcp__home-assistant__ha_remove_helpers_integrations",
+    ):
+        hid = tool_input.get("helper_id") or tool_input.get("entity_id") or ""
         return (f"Delete helper {hid}".strip(), raw_json)
 
     if tool_name == "mcp__home-assistant__ha_config_set_dashboard":
@@ -1253,6 +1451,11 @@ def _mcp_card_text(tool_name: str, tool_input: dict) -> tuple[str, str]:
         return ("Create backup", raw_json)
     if tool_name == "mcp__home-assistant__ha_backup_restore":
         return ("Restore backup", raw_json)
+    if tool_name == "mcp__home-assistant__ha_manage_backup":
+        action = (tool_input.get("action") or "").lower()
+        if "restore" in action:
+            return ("Restore backup", raw_json)
+        return ("Create backup", raw_json)
 
     return (short, raw_json)
 
@@ -1324,6 +1527,13 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
             description = mcp_body or _json.dumps(body.tool_input)[:240]
         else:
             description = plan or cmd or url or _json.dumps(body.tool_input)[:240]
+        enrichment: dict = {}
+        if body.tool_name == "mcp__home-assistant__ha_call_service":
+            enrichment = await _enrich_destructive_call(body.tool_name, body.tool_input)
+        # Re-generate title with resolved name if available
+        if body.tool_name.startswith("mcp__") and enrichment.get("entry_title"):
+            title, mcp_body = _mcp_card_text(body.tool_name, body.tool_input, enrichment["entry_title"])
+            description = mcp_body or _json.dumps(body.tool_input)[:240]
         evt = {
             "type": "permission_request",
             "id": request_id,
@@ -1335,6 +1545,10 @@ async def internal_permission(body: InternalPermissionBody) -> dict[str, bool]:
             evt["title"] = title
         if host:
             evt["domain"] = host
+        # Destructive-op enrichment
+        for key in ("destructive", "consequence", "confirm_name"):
+            if enrichment.get(key):
+                evt[key] = enrichment[key]
         await sess._emit(evt)
         audit_log(body.session_id, "permission_requested", {
             "request_id": request_id,

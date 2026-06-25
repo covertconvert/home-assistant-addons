@@ -2,6 +2,37 @@
 
 All notable changes for **Claude Code Messages**. Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0] — 2026-06-25
+
+### Security & destructive-op protection
+
+- Pre-Bash snapshot of `core.config_entries`, `core.entity_registry`, and `core.device_registry` before every shell command — content-dedup means read-only commands (ls, git log, etc.) don't generate noise; a snapshot is only written when the file has actually changed
+- Config entry UUID resolution on permission cards — destructive `ha_call_service` calls now show the human-readable integration name and entity count instead of a raw UUID
+- Destructive calls render with a red warning card ("Destructive Action"), red consequence text, and a two-tap confirm (first tap arms, second tap fires) so reflex approvals can't cause damage
+- Critical integrations require typing the integration name before the Allow button activates — fires when the integration is in the protected list or the entity count meets the configurable threshold
+- New "Destructive operation protection" section in Settings: choose which integration types always require type-to-confirm (pre-populated with mesh/hub protocols: MQTT, ZHA, Z-Wave JS, Matter, deCONZ, Thread, HomeKit, Bluetooth) and set your own entity count threshold (default: 25 — adjust down for small setups, up if you regularly tinker with large domains)
+
+### Context window
+
+- Context warning card appears inline in the chat thread at 75% context fill, upgrading to red danger styling at 90%; shows token count, a progress bar, and a "Summarise & start fresh" button to avoid compaction mid-task
+- Card updates in-place each turn — no repeated cards, just one that changes state as context fills; dismiss button if you want it out of the way
+- Context bar added to the Usage & Model modal alongside the existing 5h and 7d rate-limit bars — shows current chat context fill as a percentage; persists correctly across page reloads and addon restarts
+
+### Home Assistant integration
+
+- Upgraded ha-mcp from 3.5.1 → 7.8.1 — brings in the latest HA tool set and performance improvements
+- Fixed permission card labels broken by tool renames in ha-mcp v7
+- Enabled tool search so Claude can discover the full HA tool catalogue beyond the core pinned set
+- Trimmed the pinned core tool list to reduce context overhead on every turn
+
+### iOS / mobile polish
+
+- Preserve HA sidebar offset on iPad — was overlapping the sidebar on iPad layouts
+- Scope keyboard-reposition to iPhone only — was incorrectly clipping the sidebar on iPad
+- Use `pvv` height for keyboard on iPad to avoid touching iframe position
+
+---
+
 ## [1.1.0] — 2026-06-17
 
 ### Chat & generation

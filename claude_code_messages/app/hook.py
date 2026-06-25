@@ -36,6 +36,12 @@ from settings import load as load_settings  # noqa: E402
 
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 
+HA_STORAGE_SNAPSHOTS: tuple[str, ...] = (
+    "/config/.storage/core.config_entries",
+    "/config/.storage/core.entity_registry",
+    "/config/.storage/core.device_registry",
+)
+
 # MCP tools the CLI may call. Read-only ones auto-allow so common things like
 # "look up an entity state" don't force a permission card on every step. Any
 # tool not matching these prefixes (control, config-write, backup, service
@@ -93,6 +99,33 @@ def _snapshot(path: str, session_id: str) -> None:
         audit_log(session_id, "hook_snapshot", {"src": path, "dest": dest})
     except OSError as e:
         audit_log(session_id, "hook_snapshot_failed", {"src": path, "error": str(e)})
+
+
+def _storage_snapshot(session_id: str) -> None:
+    """Snapshot high-value HA storage files before any Bash command runs.
+    Skips if the most recent existing snapshot is byte-identical (content dedup)."""
+    import glob as _glob
+    for path in HA_STORAGE_SNAPSHOTS:
+        src = Path(path)
+        if not src.exists():
+            continue
+        try:
+            content = src.read_bytes()
+        except OSError:
+            continue
+        existing = sorted(_glob.glob(f"{path}.bak.*"))
+        if existing:
+            try:
+                if Path(existing[-1]).read_bytes() == content:
+                    continue
+            except OSError:
+                pass
+        dest = snapshot_path(path)
+        try:
+            shutil.copy2(src, dest)
+            audit_log(session_id, "hook_storage_snapshot", {"src": path, "dest": dest})
+        except OSError as e:
+            audit_log(session_id, "hook_storage_snapshot_failed", {"src": path, "error": str(e)})
 
 
 def _ask_user(session_id: str, tool_name: str, tool_input: dict) -> bool:
@@ -164,6 +197,7 @@ def main() -> None:
             ask = bool(load_settings().get("ask_bash"))
         except Exception:
             ask = True
+        _storage_snapshot(session_id)
         if ask:
             if not _ask_user(session_id, tool_name, tool_input):
                 _block(f"user rejected bash: {cmd[:120]}", session_id, summary)

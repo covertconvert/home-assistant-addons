@@ -265,6 +265,27 @@
             <p id="notify-devices-status" class="setting-help" hidden></p>
           </details>
         </div>
+        <details class="destructive-ops">
+          <summary>Destructive operation protection</summary>
+          <p class="setting-help">
+            When Claude targets a critical integration, it must type the integration
+            name to confirm. Other destructive service calls require two taps.
+          </p>
+          <div class="destructive-threshold-row">
+            <span>Type-to-confirm when</span>
+            <input type="number" id="destructive-threshold" min="1" max="9999" value="25">
+            <span>or more entities are affected</span>
+          </div>
+          <p class="setting-help">Default: 25. Set to 1 to always require it for any entity deletion.</p>
+          <div class="setting-help" style="margin-top:10px;font-weight:600;">Protected integration types</div>
+          <p class="setting-help">Always require type-to-confirm when removing these integrations.</p>
+          <ul id="protected-integ-list" class="protected-integ-list"></ul>
+          <div class="protected-custom-row">
+            <input type="text" id="protected-custom-input" placeholder="e.g. my_integration" autocomplete="off" spellcheck="false">
+            <button id="protected-custom-add" type="button">Add</button>
+          </div>
+          <p id="protected-custom-status" class="setting-help" hidden></p>
+        </details>
         <button id="settings-save" class="primary">Save settings</button>
         <p class="setting-status" id="settings-status" hidden></p>
         <button id="security-policy-open" class="link-button" type="button">View the app's built-in security policy</button>
@@ -503,6 +524,11 @@
           <div class="usage-head"><span>This week</span><span id="usage-7d-pct">—</span></div>
           <div class="usage-bar"><div id="usage-7d-bar"></div></div>
           <div class="usage-sub" id="usage-7d-reset">Resets —</div>
+        </div>
+        <div class="usage-block">
+          <div class="usage-head"><span>Chat context</span><span id="usage-ctx-pct">—</span></div>
+          <div class="usage-bar"><div id="usage-ctx-bar"></div></div>
+          <div class="usage-sub" id="usage-ctx-sub">No messages yet</div>
         </div>
         <p class="setting-help" id="usage-note">Pulled live from Anthropic. Each check uses a few tokens.</p>
         <div class="usage-section-head">Model</div>

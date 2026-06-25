@@ -37,6 +37,11 @@ DEFAULTS: dict[str, Any] = {
     "notify_devices": [],
     # Audit log retention in days. 0 = keep forever.
     "log_retention_days": 90,
+    "destructive_protected_integrations": [
+        "mqtt", "zha", "zwave_js", "matter", "deconz", "thread",
+        "homekit_controller", "bluetooth",
+    ],
+    "destructive_entity_threshold": 25,
 }
 
 
@@ -132,6 +137,8 @@ def public_view(d: dict[str, Any]) -> dict[str, Any]:
         "safe_bash_commands": SAFE_BASH_COMMANDS,
         "notify_devices": list(d.get("notify_devices") or []),
         "log_retention_days": int(d.get("log_retention_days") or 90),
+        "destructive_protected_integrations": list(d.get("destructive_protected_integrations") or []),
+        "destructive_entity_threshold": int(d.get("destructive_entity_threshold") or 25),
     }
 
 
@@ -166,10 +173,12 @@ def write_mcp_config_if_enabled() -> Path | None:
             "home-assistant": {
                 "type": "stdio",
                 "command": "uvx",
-                "args": ["--index-strategy", "unsafe-best-match", "ha-mcp@3.5.1"],
+                "args": ["--index-strategy", "unsafe-best-match", "ha-mcp@7.8.1"],
                 "env": {
                     "HOMEASSISTANT_URL": s["ha_url"],
                     "HOMEASSISTANT_TOKEN": s["ha_token"],
+                    "ENABLE_TOOL_SEARCH": "true",
+                    "PINNED_TOOLS": "ha_call_service,ha_get_state,ha_search,ha_bulk_control",
                 },
             }
         }

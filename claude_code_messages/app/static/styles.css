@@ -537,6 +537,124 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
   margin-bottom: 12px;
 }
 .permission .plan-notice strong { color: var(--text); }
+.permission.destructive {
+  background: color-mix(in srgb, var(--danger) 8%, var(--warn));
+  border-left: 3px solid var(--danger);
+}
+.permission.destructive .perm-icon { color: var(--danger); }
+.permission.destructive .perm-label { color: var(--danger); }
+.permission .consequence {
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.permission .confirm-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+.permission .confirm-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.permission .confirm-input {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  background: var(--bg);
+  border: 1.5px solid var(--danger);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  width: 100%;
+  box-sizing: border-box;
+}
+.permission .confirm-input:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 30%, transparent); }
+.permission .approve.two-tap-ready {
+  background: var(--danger);
+  color: white;
+  border-color: var(--danger);
+}
+
+/* ── Context window warning card ─────────────────────────────────────────── */
+.context-warning {
+  align-self: stretch;
+  background: var(--warn);
+  border: 1px solid var(--warn-border);
+  border-left: 3px solid #e0913a;
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.context-warning.danger {
+  background: color-mix(in srgb, var(--danger) 10%, var(--warn));
+  border-left-color: var(--danger);
+}
+.context-warning-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.context-warning-icon {
+  font-size: 13px;
+  color: #e0913a;
+  font-weight: 700;
+  line-height: 1;
+}
+.context-warning.danger .context-warning-icon { color: var(--danger); }
+.context-warning-title {
+  font-size: 13px;
+  font-weight: 700;
+  flex: 1;
+  color: var(--text);
+}
+.context-dismiss {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0;
+  line-height: 1;
+  opacity: 0.6;
+}
+.context-dismiss:hover { opacity: 1; }
+.context-bar {
+  height: 4px;
+  background: color-mix(in srgb, var(--warn-border) 50%, transparent);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.context-bar-fill {
+  height: 100%;
+  background: #e0913a;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.context-bar-fill.danger { background: var(--danger); }
+.context-warning-body {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 0;
+  line-height: 1.4;
+}
+.context-fresh-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 13px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  align-self: flex-start;
+  transition: opacity 0.15s;
+}
+.context-fresh-btn:active { opacity: 0.6; }
 
 .allowlist { margin: 4px 0 12px; padding: 8px 10px; background: var(--panel-2); border-radius: 10px; }
 .allowlist-head { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
@@ -564,6 +682,15 @@ textarea { font: inherit; color: inherit; background: transparent; border: 0; re
 .bulk-toggle button:active { background: var(--border); color: var(--text); }
 .safe-bash-list { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
 .safe-bash-list li { padding: 0; }
+.destructive-ops details { margin-top: 12px; }
+.destructive-ops summary { cursor: pointer; font-size: 13px; color: var(--text-dim); }
+.protected-integ-list { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 4px; }
+.protected-integ-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.protected-integ-list li button { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 14px; padding: 0 4px; line-height: 1; }
+.protected-custom-row { display: flex; gap: 6px; margin-top: 8px; }
+.protected-custom-row input { flex: 1; }
+.destructive-threshold-row { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-size: 13px; }
+.destructive-threshold-row input { width: 70px; }
 .safe-bash-list label {
   display: grid; grid-template-columns: auto auto 1fr; gap: 8px;
   align-items: baseline; padding: 6px 8px;

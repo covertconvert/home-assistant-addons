@@ -222,6 +222,39 @@ def session_cost(session_id: str) -> dict[str, int]:
     return totals
 
 
+def session_latest_input_tokens(session_id: str) -> int:
+    """Return input_tokens from the most recent assistant turn.
+    This is the best proxy for current context window usage since it reflects
+    the full conversation history the model just processed. Returns 0 if unavailable."""
+    path = _project_dir() / f"{session_id}.jsonl"
+    if not path.exists():
+        return 0
+    last = 0
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    raw = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if raw.get("type") != "assistant":
+                    continue
+                u = ((raw.get("message") or {}).get("usage") or {})
+                tokens = (
+                    int(u.get("input_tokens") or 0)
+                    + int(u.get("cache_creation_input_tokens") or 0)
+                    + int(u.get("cache_read_input_tokens") or 0)
+                )
+                if tokens > 0:
+                    last = tokens
+    except OSError:
+        pass
+    return last
+
+
 def _tool_summary(name: str, input_: dict) -> str:
     if name == "Bash":
         cmd = input_.get("command", "")

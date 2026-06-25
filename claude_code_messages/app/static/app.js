@@ -547,6 +547,9 @@ function handleEvent(evt) {
     case 'usage':
       addUsageTokens(evt);
       break;
+    case 'context_usage':
+      updateContextWarning(evt);
+      break;
     case 'generation_ended':
       finalizeThinking();
       if (state.didCompact) {
@@ -871,12 +874,13 @@ function updateToolCard(evt) {
 }
 
 function appendPermissionCard(evt) {
-  // Guard against a duplicate card for the same request id (e.g. a live event
-  // arriving just after a snapshot replay already rendered it).
   const existing = document.getElementById(`perm-${evt.id}`);
   if (existing) existing.remove();
   const card = document.createElement('div');
-  card.className = 'permission';
+  const isDestructive = !!evt.destructive;
+  const confirmName = evt.confirm_name || '';
+  const consequence = evt.consequence || '';
+  card.className = 'permission' + (isDestructive ? ' destructive' : '');
   card.id = `perm-${evt.id}`;
   const domain = evt.domain || '';
   const isPlan = evt.tool === 'exit_plan_mode' || evt.tool === 'ExitPlanMode';
@@ -896,17 +900,30 @@ function appendPermissionCard(evt) {
   const planNotice = isPlan
     ? `<div class="plan-notice"><strong>Approve & start coding</strong> switches this chat out of plan mode and begins implementation. <strong>Refine plan</strong> stays in plan mode — Claude will ask what you'd like to change.</div>`
     : '';
+  const permLabel = isDestructive ? 'Destructive Action' : 'Permission Required';
   const cardHeader = isPlan
     ? `<div class="title">Plan ready — start coding?</div>`
-    : `<div class="perm-header"><span class="perm-icon">⚠</span><span class="perm-label">Permission Required</span></div>
+    : `<div class="perm-header"><span class="perm-icon">⚠</span><span class="perm-label">${escapeHtml(permLabel)}</span></div>
        <div class="perm-tool">${escapeHtml(evt.title || evt.tool || 'action')}</div>`;
+  const consequenceHtml = consequence
+    ? `<div class="consequence">${escapeHtml(consequence)}</div>`
+    : '';
+  const confirmHtml = confirmName
+    ? `<div class="confirm-wrap">
+         <div class="confirm-label">Type <strong>${escapeHtml(confirmName)}</strong> to confirm deletion</div>
+         <input class="confirm-input" type="text" placeholder="${escapeHtml(confirmName)}" autocomplete="off" spellcheck="false">
+       </div>`
+    : '';
+  const approveDisabled = confirmName ? ' disabled' : '';
   card.innerHTML = `
     ${cardHeader}
     ${domainLine}
     <div class="body">${escapeHtml(evt.description || '')}</div>
+    ${consequenceHtml}
     ${planNotice}
+    ${confirmHtml}
     <div class="actions">
-      <button class="approve">${approveLabel}</button>
+      <button class="approve"${approveDisabled}>${approveLabel}</button>
       ${allowDomainBtn}
       ${allowTurnBtn}
       ${saveForLaterBtn}
@@ -914,7 +931,40 @@ function appendPermissionCard(evt) {
     </div>
   `;
   const reqId = evt.id;
-  card.querySelector('.approve').addEventListener('click', () => respondPermission(reqId, 'allow_once'));
+  const approveBtn = card.querySelector('.approve');
+
+  if (confirmName) {
+    // Type-to-confirm (D): approve only enabled when typed name matches exactly
+    const input = card.querySelector('.confirm-input');
+    input.addEventListener('input', () => {
+      approveBtn.disabled = input.value.trim() !== confirmName;
+    });
+    approveBtn.addEventListener('click', () => {
+      if (!approveBtn.disabled) respondPermission(reqId, 'allow_once');
+    });
+  } else if (isDestructive && !isPlan) {
+    // Two-tap (C): first click arms, second click fires
+    let armed = false;
+    let resetTimer = null;
+    approveBtn.addEventListener('click', () => {
+      if (!armed) {
+        armed = true;
+        approveBtn.textContent = 'Confirm — yes, proceed';
+        approveBtn.classList.add('two-tap-ready');
+        resetTimer = setTimeout(() => {
+          armed = false;
+          approveBtn.textContent = approveLabel;
+          approveBtn.classList.remove('two-tap-ready');
+        }, 6000);
+      } else {
+        clearTimeout(resetTimer);
+        respondPermission(reqId, 'allow_once');
+      }
+    });
+  } else {
+    approveBtn.addEventListener('click', () => respondPermission(reqId, 'allow_once'));
+  }
+
   card.querySelector('.reject').addEventListener('click', () => respondPermission(reqId, 'reject'));
   const allowDomain = card.querySelector('.approve-domain');
   if (allowDomain) allowDomain.addEventListener('click', () => respondPermission(reqId, 'allow_domain'));
@@ -935,6 +985,57 @@ function removePermissionCard(id) {
   // killed by a stale cleanup.
   const card = id ? document.getElementById(`perm-${id}`) : document.querySelector('.permission');
   if (card) card.remove();
+}
+
+const CONTEXT_WARN_PCT  = 0.75;
+const CONTEXT_DANGER_PCT = 0.90;
+
+function updateContextWarning(evt) {
+  lastContextUsage = evt;
+  const pct = evt.pct || 0;
+  const existing = document.getElementById('context-warning');
+  if (pct < CONTEXT_WARN_PCT) {
+    if (existing) existing.remove();
+    return;
+  }
+  const pctDisplay = Math.round(pct * 100);
+  const isDanger = pct >= CONTEXT_DANGER_PCT;
+  const tokens = (evt.input_tokens || 0).toLocaleString();
+  const windowK = Math.round((evt.context_window || 200000) / 1000);
+
+  if (existing) {
+    existing.className = 'context-warning' + (isDanger ? ' danger' : '');
+    const icon = existing.querySelector('.context-warning-icon');
+    if (icon) icon.textContent = isDanger ? '!!' : '!';
+    const pctEl = existing.querySelector('.context-pct');
+    if (pctEl) pctEl.textContent = `${pctDisplay}%`;
+    const fill = existing.querySelector('.context-bar-fill');
+    if (fill) {
+      fill.style.width = `${Math.min(pctDisplay, 100)}%`;
+      fill.className = 'context-bar-fill' + (isDanger ? ' danger' : '');
+    }
+    const body = existing.querySelector('.context-warning-body');
+    if (body) body.textContent = `${tokens} of ${windowK}k tokens used. Starting a new chat now avoids compaction mid-task.`;
+    return;
+  }
+
+  const div = document.createElement('div');
+  div.id = 'context-warning';
+  div.className = 'context-warning' + (isDanger ? ' danger' : '');
+  div.innerHTML = `
+    <div class="context-warning-head">
+      <span class="context-warning-icon">${isDanger ? '!!' : '!'}</span>
+      <span class="context-warning-title">Context <span class="context-pct">${pctDisplay}%</span> full</span>
+      <button class="context-dismiss" aria-label="Dismiss">&times;</button>
+    </div>
+    <div class="context-bar"><div class="context-bar-fill${isDanger ? ' danger' : ''}" style="width:${Math.min(pctDisplay,100)}%"></div></div>
+    <p class="context-warning-body">${tokens} of ${windowK}k tokens used. Starting a new chat now avoids compaction mid-task.</p>
+    <button class="context-fresh-btn">Summarise &amp; start fresh</button>
+  `;
+  div.querySelector('.context-dismiss').addEventListener('click', () => div.remove());
+  div.querySelector('.context-fresh-btn').addEventListener('click', () => { div.remove(); summarizeFresh(); });
+  els.thread.appendChild(div);
+  scrollToBottom();
 }
 
 function appendSystem(text) {
@@ -1684,6 +1785,8 @@ const settingsEls = {
   status: document.getElementById('settings-status'),
   logInfoText: document.getElementById('log-info-text'),
   logRetention: document.getElementById('log-retention-days'),
+  destructiveThreshold: document.getElementById('destructive-threshold'),
+  protectedIntegList: document.getElementById('protected-integ-list'),
 };
 
 // In-memory copy of the persisted allowlist while the settings modal is open.
@@ -1692,6 +1795,7 @@ let webfetchDomains = [];
 let safeBashEnabled = [];   // command keys currently ticked
 let safeBashCatalog = {};   // {command: description} from the server
 let notifyDevices = [];     // selected notify.mobile_app_* service names
+let protectedIntegrations = [];   // currently saved list of protected integration domains
 
 function renderSafeBashList() {
   const ul = document.getElementById('safe-bash-list');
@@ -1767,6 +1871,56 @@ async function renderNotifyDevices() {
     ul.appendChild(li);
   }
 }
+
+function renderProtectedIntegrations() {
+  const ul = settingsEls.protectedIntegList;
+  if (!ul) return;
+  ul.innerHTML = '';
+  for (const domain of protectedIntegrations) {
+    const li = document.createElement('li');
+    li.innerHTML = `<code>${escapeHtml(domain)}</code><button type="button" data-domain="${escapeHtml(domain)}" aria-label="Remove">✕</button>`;
+    li.querySelector('button').addEventListener('click', () => {
+      protectedIntegrations = protectedIntegrations.filter(d => d !== domain);
+      renderProtectedIntegrations();
+    });
+    ul.appendChild(li);
+  }
+}
+
+const protectedCustomInput = document.getElementById('protected-custom-input');
+const protectedCustomAdd = document.getElementById('protected-custom-add');
+const protectedCustomStatus = document.getElementById('protected-custom-status');
+
+async function addProtectedIntegration() {
+  const val = (protectedCustomInput ? protectedCustomInput.value : '').trim().toLowerCase();
+  if (!val) return;
+  if (protectedIntegrations.includes(val)) {
+    if (protectedCustomStatus) { protectedCustomStatus.textContent = `${val} is already in the list.`; protectedCustomStatus.hidden = false; }
+    return;
+  }
+  // Validate against HA config entries if possible
+  if (protectedCustomStatus) protectedCustomStatus.hidden = true;
+  try {
+    const entries = await api('api/ha/config_entries');
+    const domains = (entries || []).map(e => (e.domain || '').toLowerCase());
+    if (domains.length > 0 && !domains.includes(val)) {
+      if (protectedCustomStatus) {
+        protectedCustomStatus.textContent = `No config entry found with domain "${val}". Check the spelling and try again.`;
+        protectedCustomStatus.hidden = false;
+      }
+      return;
+    }
+  } catch {
+    // If we can't validate (HA not configured), allow it anyway
+  }
+  protectedIntegrations.push(val);
+  if (protectedCustomInput) protectedCustomInput.value = '';
+  if (protectedCustomStatus) protectedCustomStatus.hidden = true;
+  renderProtectedIntegrations();
+}
+
+if (protectedCustomAdd) protectedCustomAdd.addEventListener('click', addProtectedIntegration);
+if (protectedCustomInput) protectedCustomInput.addEventListener('keydown', e => { if (e.key === 'Enter') addProtectedIntegration(); });
 
 function renderAllowlist() {
   settingsEls.allowlistItems.innerHTML = '';
@@ -1892,6 +2046,9 @@ async function openSettings() {
     // Must run AFTER settingsEls.enabled.checked is set — the picker is
     // gated on the HA-integration toggle and would otherwise see stale state.
     renderNotifyDevices();
+    protectedIntegrations = (s.destructive_protected_integrations || []).slice();
+    renderProtectedIntegrations();
+    if (settingsEls.destructiveThreshold) settingsEls.destructiveThreshold.value = String(s.destructive_entity_threshold ?? 25);
     settingsEls.panel.hidden = false;
   } catch (e) {
     alert(`Failed to load settings: ${e.message}`);
@@ -2012,6 +2169,8 @@ async function saveSettings() {
         bash_auto_allow: safeBashEnabled,
         notify_devices: notifyDevices,
         log_retention_days: parseInt(settingsEls.logRetention.value, 10),
+        destructive_protected_integrations: protectedIntegrations,
+        destructive_entity_threshold: parseInt((settingsEls.destructiveThreshold && settingsEls.destructiveThreshold.value) || '25', 10),
       }),
     });
     const savedMsg = 'Saved. Start a new chat (or use \u201cSummarise & start fresh\u201d on an existing one) to apply.';
@@ -2366,7 +2525,32 @@ const costEls = {
   pct7d: document.getElementById('usage-7d-pct'),
   bar7d: document.getElementById('usage-7d-bar'),
   reset7d: document.getElementById('usage-7d-reset'),
+  pctCtx: document.getElementById('usage-ctx-pct'),
+  barCtx: document.getElementById('usage-ctx-bar'),
+  subCtx: document.getElementById('usage-ctx-sub'),
 };
+
+let lastContextUsage = null;
+
+function setContextBlock(pctEl, barEl, subEl, data) {
+  if (!data || !data.input_tokens || !data.context_window) {
+    if (pctEl) pctEl.textContent = '—';
+    if (barEl) barEl.style.width = '0%';
+    if (subEl) subEl.textContent = 'No messages yet';
+    return;
+  }
+  const pct = data.pct || (data.input_tokens / data.context_window);
+  const p = Math.round(pct * 100);
+  const usedK = Math.round(data.input_tokens / 1000);
+  const windowK = Math.round(data.context_window / 1000);
+  if (pctEl) pctEl.textContent = `${p}%`;
+  if (barEl) {
+    barEl.style.width = `${Math.min(100, p)}%`;
+    barEl.classList.toggle('danger', p >= 90);
+    barEl.classList.toggle('warn', p >= 75 && p < 90);
+  }
+  if (subEl) subEl.textContent = `${usedK}k of ${windowK}k tokens`;
+}
 
 function fmtUntil(ts) {
   if (!ts) return 'Resets —';
@@ -2412,12 +2596,23 @@ async function openCost() {
   costEls.bar7d.style.width = '0%';
   costEls.reset5h.textContent = 'Resets —';
   costEls.reset7d.textContent = 'Resets —';
+  setContextBlock(costEls.pctCtx, costEls.barCtx, costEls.subCtx, lastContextUsage);
   renderCostModalPicks();
   costEls.panel.hidden = false;
   try {
-    const u = await api('api/usage');
+    const [u, cost] = await Promise.all([
+      api('api/usage'),
+      state.sessionId ? api(`api/sessions/${state.sessionId}/cost`).catch(() => null) : Promise.resolve(null),
+    ]);
     setUsageBlock(costEls.pct5h, costEls.bar5h, costEls.reset5h, u.five_hour_pct, u.five_hour_reset);
     setUsageBlock(costEls.pct7d, costEls.bar7d, costEls.reset7d, u.seven_day_pct, u.seven_day_reset);
+    if (cost && cost.latest_input) {
+      setContextBlock(costEls.pctCtx, costEls.barCtx, costEls.subCtx, {
+        input_tokens: cost.latest_input,
+        context_window: cost.context_window,
+        pct: cost.context_pct,
+      });
+    }
   } catch (err) {
     appendSystem(`Usage lookup failed: ${err.message}`);
     costEls.panel.hidden = true;
@@ -2781,22 +2976,43 @@ async function bootApp() {
     app.style.height = h + 'px';
   };
 
-  // The iframe-reposition trick is iOS-only. On desktop Safari/Chrome the HA
-  // sidebar overlays the first ~250px of the window, and pinning the iframe
-  // to `left: 0` of the parent viewport hides the chat behind the sidebar.
-  // iPadOS reports as MacIntel with maxTouchPoints>1, so check both UA and
-  // touch capability.
-  const isIOS =
-    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  // Three cases for iOS/iPadOS keyboard + sidebar handling:
+  //
+  // iPhone: sidebar is always a modal overlay so pinning the iframe to
+  //   left:0/right:0 is safe. Use pvv (parent visual viewport) for height
+  //   since WKWebView scrolls the iframe element, not the inner viewport.
+  //
+  // iPad: HA's layout already positions the iframe to the right of its
+  //   persistent sidebar — don't touch horizontal positioning. But the inner
+  //   viewport (vv) doesn't resize when the docked keyboard appears either,
+  //   so we still need pvv.height for correct keyboard-aware sizing.
+  //
+  // Desktop: use the inner vv only; no iframe repositioning needed.
+  //
+  // iPadOS reports MacIntel + maxTouchPoints>1; check both UA and touch.
+  const isIPhone = /iPhone|iPod/.test(navigator.userAgent);
+  const isIPad = /iPad/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-  if (fe && pvv && isIOS) {
+  if (fe && pvv && isIPhone) {
     fe.style.position = 'fixed';
     fe.style.left = '0';
     fe.style.right = '0';
     const apply = () => {
       fe.style.top = pvv.offsetTop + 'px';
       fe.style.height = pvv.height + 'px';
+      lockHeights(pvv.height);
+      let fullH = pvv.height;
+      try { fullH = window.parent.innerHeight || fullH; } catch (_) {}
+      setKeyboardClass(pvv.height, fullH);
+    };
+    pvv.addEventListener('resize', apply);
+    pvv.addEventListener('scroll', apply);
+    window.addEventListener('focus', apply);
+    apply();
+  } else if (pvv && isIPad) {
+    // Don't touch fe.style — HA handles sidebar layout. Use pvv for height.
+    const apply = () => {
       lockHeights(pvv.height);
       let fullH = pvv.height;
       try { fullH = window.parent.innerHeight || fullH; } catch (_) {}

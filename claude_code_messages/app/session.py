@@ -207,6 +207,13 @@ class Session:
     # True between seeing the CLI's synthetic resume-prompt user turn and the end
     # of the model's reply to it — used to swallow that whole spurious turn.
     _suppressing_resume: bool = False
+    # Armed when we start a --resume session, before the synthetic resume-prompt
+    # user event has arrived on stdout. The CLI sometimes never echoes the
+    # resume-prompt user turn on stdout (emitting it only to the JSONL), so the
+    # normal RESUME_ACK_MARKER detection in the user handler never fires and
+    # _suppressing_resume is never set. This flag lets the assistant handler
+    # detect the resume ack from its stop_reason=stop_sequence instead.
+    _awaiting_resume_ack: bool = False
     _silent_shutdown: bool = False
     _plan_refine_pending: bool = False
     # Set True for respawns the user initiated (Stop, model/effort switch, plan
@@ -293,6 +300,12 @@ class Session:
         token = load_token()
         if token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+        # Arm the resume-ack suppression before the process starts so it's
+        # race-free: the stdout/JSONL events from the synthetic resume turn can
+        # arrive the moment the process writes them, and the flag must already
+        # be set by then.
+        if existing:
+            self._awaiting_resume_ack = True
         self.proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=WORKDIR,
@@ -476,6 +489,17 @@ class Session:
                 if terminal_sr:
                     self._suppressing_resume = False
                 return []
+            # Tail-JSONL path: the CLI often does NOT emit the synthetic resume
+            # user turn on stdout, so _suppressing_resume is never set via the
+            # user-event handler. Detect the resume ack from its stop_reason
+            # instead: the ack marker <<ccm-resume-ack>> is the stop sequence, so
+            # any stop_sequence response while we're still awaiting the ack is
+            # the resume turn. Set _suppressing_resume so the result event is
+            # also suppressed (clearing the flag there, not here).
+            if self._awaiting_resume_ack and sr == "stop_sequence":
+                self._awaiting_resume_ack = False
+                self._suppressing_resume = True
+                return []
             msg = raw.get("message", {}) or {}
             msg_id = msg.get("id") or uuid.uuid4().hex
             out: list[dict] = []
@@ -532,6 +556,7 @@ class Session:
             for block in blocks:
                 if block.get("type") == "text" and RESUME_ACK_MARKER in (block.get("text") or ""):
                     self._suppressing_resume = True
+                    self._awaiting_resume_ack = False  # stdout path saw it; tail path won't need it
                     # Deliberate respawn (Stop / switch / refine) → stay silent.
                     # Unexpected respawn (crash / compaction / addon restart) →
                     # warn that in-progress work may be incomplete.
@@ -556,6 +581,7 @@ class Session:
             # so no stray generation_ended reaches the UI.
             if self._suppressing_resume:
                 self._suppressing_resume = False
+                self._awaiting_resume_ack = False
                 return []
             return [{
                 "type": "generation_ended",
